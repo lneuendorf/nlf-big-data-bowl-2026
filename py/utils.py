@@ -1,8 +1,15 @@
 import re
+import logging
 from typing import Tuple
 
 import pandas as pd
 import numpy as np
+
+logging.basicConfig(
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+LOG = logging.getLogger(__name__)
 
 def uncamelcase_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Convert camelCase column names to snake_case."""
@@ -82,10 +89,15 @@ def join_split_standardize(
         [tracking_cols]
     ]).sort_values(['gpid', 'nfl_id', 'frame_id'], ignore_index=True)
 
+    LOG.info('Joined input and output tracking data: %d unique plays, %d unique nfl_ids',
+                n_unique_gpid, n_unique_nflid)
+
     # Standardize the direction of the play and the players to be vertical
+    LOG.info('Standardizing direction of play and players to be vertical')
     tracking, plays = _standardize_direction(tracking, plays)
 
     # Approximate missing speed, acceleration and direction values for the output frames
+    LOG.info('Approximating missing speed, acceleration and direction values')
     tracking = _approximate_missing_speed_acceleration_direction(tracking)
 
     # Assumption: missing orientation values equals direction values
@@ -149,6 +161,7 @@ def _standardize_direction(
             (180 - original_o) % 360
         )
     )
+    tracking = tracking.drop('play_direction', axis=1)
 
     # Standardize the play data to be vertical
     play['absolute_yardline_number'] = np.where(
@@ -204,8 +217,9 @@ def _approximate_missing_speed_acceleration_direction(
             s_r2 = nonull[['s', s_col]].corr().iloc[0,1]**2
             a_r2 = nonull[['a', a_col]].corr().iloc[0,1]**2
             dir_r2 = nonull[['dir', dir_col]].corr().iloc[0,1]**2
-            print(f'{s_col}: speed R²={s_r2:.4f} | {a_col}: accel R²={a_r2:.4f}'
-                  f' | {dir_col}: dir R²={dir_r2:.4f}')
+            correlations = (f'{s_col}: speed R²={s_r2:.4f} | {a_col}: accel R²={a_r2:.4f}'
+                f' | {dir_col}: dir R²={dir_r2:.4f}')
+            LOG.info('Correlation results for imputations: %s', correlations)
 
     # Fill in missing values with the approximations
     tracking['s'] = tracking['s'].fillna(tracking['s_approx'])
