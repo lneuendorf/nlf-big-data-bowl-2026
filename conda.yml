@@ -1,0 +1,27 @@
+name: bdb26
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.11
+  - ipython
+  - jupyter
+  - ipykernel
+  - pandas
+  - numpy
+  - matplotlib
+  - seaborn
+  - scikit-learn
+  - pyarrow
+  - tqdm
+  - ffmpeg
+  - xgboost
+  - pymc
+  - statsmodels
+  - graphviz
+  - scikit-optimize
+  - optuna
+  - shap
+  - pip
+  - pip:
+    - nfl-data-py
