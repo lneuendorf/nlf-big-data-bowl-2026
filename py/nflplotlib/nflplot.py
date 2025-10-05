@@ -3,10 +3,12 @@ import matplotlib.animation as animation
 import pandas as pd
 import numpy as np
 from IPython.display import HTML
+import textwrap
 
 def animate_play(
     tracking_play: pd.DataFrame, 
     play: pd.DataFrame,
+    game: pd.DataFrame = None,
     save_path: str = None
 ):
     """Animate a single play from tracking data.
@@ -14,6 +16,7 @@ def animate_play(
     Args:
         tracking_play: DataFrame containing tracking data for a single play (single gpid).
         play: DataFrame containing the play level data for a single play.
+        game: Optional DataFrame containing game level data for a single game.
         save_path: Optional path to save the animation as a video file. If None, the 
             animation is displayed inline.
 
@@ -24,6 +27,8 @@ def animate_play(
         raise ValueError("Tracking DataFrame must contain only one unique play (gpid).")
     if play['gpid'].nunique() != 1:
         raise ValueError("Play DataFrame must contain only one unique play (gpid).")
+    if game is not None and game['game_id'].nunique() != 1:
+        raise ValueError("Game DataFrame must contain only one unique game (gpid).")
 
     tracking_play = tracking_play.sort_values(by='frame_id')
 
@@ -50,7 +55,7 @@ def animate_play(
     fig, ax = plt.subplots(figsize=(10, 7))
     ax.set_xlim(min_x, max_x)
     ax.set_ylim(-0.1, 53.4)  # Field width becomes y-axis
-    ax.set_aspect('equal')
+    # ax.set_aspect('equal') # Equal aspect ratio between x and y axes
     
     # Remove axis elements
     ax.set_xticks([])  # Remove x-axis ticks
@@ -63,9 +68,7 @@ def animate_play(
     ax.spines['right'].set_visible(False)
     ax.spines['bottom'].set_visible(False)
     ax.spines['left'].set_visible(False)
-    
-    ax.set_title(f"Play Animation: {tracking_play['gpid'].iloc[0]}")
-    
+        
     # Add vertical yard lines every 5 yards on the x-axis
     for yard_line in range(int(np.ceil(min_x)), int(np.floor(max_x)) + 1):
         if yard_line % 5 == 0:  # Every 5 yards
@@ -92,7 +95,15 @@ def animate_play(
             for hash_y in hash_y_positions:
                 ax.plot([yard_line, yard_line], [hash_y - hash_width, hash_y + hash_width], 
                     color='gray', linestyle='-', alpha=0.7, linewidth=1)
-    
+                
+    # Plot the line of scrimmage
+    los_x = play['absolute_yardline_number'].values[0]
+    ax.axvline(x=los_x, color='blue', linestyle='-', alpha=0.8, linewidth=2)
+
+    # Plot the first down line
+    ytg = play['yards_to_go'].values[0]
+    ax.axvline(x=los_x + ytg, color='yellow', linestyle='-', alpha=0.8, linewidth=2)
+
     # Colors by side
     color_map = {
         'Offense': 'dodgerblue', 
@@ -109,9 +120,11 @@ def animate_play(
     scat_ball, = ax.plot([], [], 'o', color=color_map['Ball'], label='Ball', alpha=1.0, markersize=6, markeredgecolor='black')
     
     ax.legend(
-        loc='center right',
-        bbox_to_anchor=(1.1, 0.9),
+        loc='center left',
+        bbox_to_anchor=(.9, 1.09),
     )
+
+    ax = _add_game_info_text(ax, play, game)
 
     # --- Animation update ---
     def update(frame_tuple):
@@ -125,11 +138,6 @@ def animate_play(
         scat_off.set_data(off_data['x'], off_data['y'])
         scat_def.set_data(def_data['x'], def_data['y'])
         scat_ball.set_data(ball_data['x'], ball_data['y'])
-        
-        # Update title with frame info
-        play_info = f"Play: {tracking_play['gpid'].iloc[0]} | Frame: {frame_id}"
-        
-        ax.set_title(play_info)
         
         return scat_off, scat_def, scat_ball
 
@@ -152,7 +160,7 @@ def animate_play(
         plt.close(fig)
         return HTML(ani.to_jshtml())
     
-def _plot_yardlines(ax, min_x, max_x):
+def _plot_yardlines(ax, min_x, max_x) -> plt.Axes:
     yardline_positions = [10, 20, 30, 40, 50, 40, 30, 20, 10]
     yardline_x_positions = [20, 30, 40, 50, 60, 70, 80, 90, 100]
 
@@ -215,5 +223,45 @@ def _plot_yardlines(ax, min_x, max_x):
                                     [triangle_x - triangle_length+.2, triangle_y + triangle_height / 2]],
                                    closed=True, color='grey')
         ax.add_patch(triangle)
+
+    return ax
+
+def _add_game_info_text(ax, play: pd.DataFrame, game: pd.DataFrame) -> plt.Axes:
+    home_team = game['home_team_abbr'].values[0]
+    away_team = game['visitor_team_abbr'].values[0]
+    offense = play['possession_team'].values[0]
+    offense_score = play['pre_snap_home_score'].values[0] \
+        if play['possession_team'].values[0] == home_team \
+        else play['pre_snap_visitor_score'].values[0]
+    defense = play['defensive_team'].values[0]
+    defense_score = play['pre_snap_visitor_score'].values[0] \
+        if play['defensive_team'].values[0] == away_team \
+        else play['pre_snap_home_score'].values[0]
+    quarter = play['quarter'].values[0]
+    game_clock = play['game_clock'].values[0]
+    down = play['down'].values[0]
+    distance = play['yards_to_go'].values[0]
+    play_description = play['play_description'].values[0]
+    if play_description.startswith('('):
+        play_description = play_description.split(')', 1)[1].strip()
+
+    down_mapper = {1: '1st', 2: '2nd', 3: '3rd', 4: '4th'}
+    play_info = (f"{away_team} @ {home_team} | "
+                 f"{offense} {offense_score} - {defense} {defense_score} | "
+                 f"Q{quarter} {game_clock} | "
+                 f"{down_mapper[down]} & {distance}")
+
+    ax.set_title(loc='left', y=1.12, label=play_info, fontsize=16, 
+                 fontweight='bold', ha='left', va='top')
+
+    wrapped_text = textwrap.fill(play_description, width=100)
+    ax.text(
+        0, 1.07, wrapped_text,
+        ha='left',
+        va='top',
+        transform=ax.transAxes,
+        fontsize=10,
+        wrap=True
+    )
 
     return ax
