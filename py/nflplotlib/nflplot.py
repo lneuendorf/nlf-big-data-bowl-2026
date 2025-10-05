@@ -1,14 +1,17 @@
+from typing import Dict
+import textwrap
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+import matplotlib.patheffects as pe
 import pandas as pd
 import numpy as np
 from IPython.display import HTML
-import textwrap
 
 def animate_play(
     tracking_play: pd.DataFrame, 
     play: pd.DataFrame,
     game: pd.DataFrame,
+    team_desc: pd.DataFrame,
     save_path: str = None,
     plot_positions: bool = False
 ):
@@ -18,6 +21,7 @@ def animate_play(
         tracking_play: DataFrame containing tracking data for a single play (single gpid).
         play: DataFrame containing the play level data for a single play.
         game: Optional DataFrame containing game level data for a single game.
+        team_desc: DataFrame containing team descriptions (abbreviations, full names, logos, etc).
         save_path: Optional path to save the animation as a video file. If None, the 
             animation is displayed inline.
         plot_positions: If True, player positions (e.g., WR, QB) will be annotated over 
@@ -108,10 +112,44 @@ def animate_play(
     ax.axvline(x=los_x + ytg, color='yellow', linestyle='-', alpha=0.8, linewidth=2)
 
     # Colors by side
-    color_map = {
-        'Offense': 'dodgerblue', 
-        'Defense': 'orangered', 
+    def is_color_darker(color1, color2):
+        color_brightness = {
+            'black': 0, 'navy': 10, 'blue': 50, 'green': 50, 'red': 100,
+            'purple': 60, 'gold': 200, 'yellow': 220, 'white': 255,
+            'brown': 80, 'orange': 180, 'gray': 128
+        }
+        
+        brightness1 = color_brightness.get(color1.lower(), 128)
+        brightness2 = color_brightness.get(color2.lower(), 128)
+        
+        return brightness1 < brightness2
+
+    offense = play.possession_team.values[0]
+    home_team_is_offense = game.home_team_abbr.values[0] == offense
+    offense_c1 = team_desc.query('team_abbr == @offense').team_color.values[0]
+    offense_c2 = team_desc.query('team_abbr == @offense').team_color2.values[0]
+    if is_color_darker(offense_c1, offense_c2):
+        off_main, off_edge = offense_c1, offense_c2
+    else:
+        off_main, off_edge = offense_c2, offense_c1
+
+    defense = play.defensive_team.values[0]
+    defense_c1 = team_desc.query('team_abbr == @defense').team_color.values[0]
+    defense_c2 = team_desc.query('team_abbr == @defense').team_color2.values[0]
+    if is_color_darker(defense_c1, defense_c2):
+        def_main, def_edge = defense_c1, defense_c2
+    else:
+        def_main, def_edge = defense_c2, defense_c1
+
+    main_color_map = {
+        'Offense': off_main,
+        'Defense': def_main,
         'Ball': 'brown'
+    }
+    edge_color_map = {
+        'Offense': off_edge, 
+        'Defense': def_edge,
+        'Ball': 'black'
     }
     
     # Group by frame for animation
@@ -123,16 +161,31 @@ def animate_play(
         marker_size=8
     
     # Set up scatter plot placeholders for all three groups
-    scat_off, = ax.plot([], [], 'o', color=color_map['Offense'], label='Offense', alpha=0.7, markersize=marker_size, zorder=3)
-    scat_def, = ax.plot([], [], 'o', color=color_map['Defense'], label='Defense', alpha=0.7, markersize=marker_size, zorder=3)
-    scat_ball, = ax.plot([], [], 'o', color=color_map['Ball'], label='Ball', alpha=1.0, markersize=6, markeredgecolor='black', zorder=5)
+    scat_off = ax.scatter([], [], s=marker_size**2, c=main_color_map['Offense'],
+                      edgecolors=edge_color_map['Offense'], linewidths=2,
+                      label='Offense', alpha=0.7, zorder=3)
+    scat_def = ax.scatter([], [], s=marker_size**2, c=main_color_map['Defense'],
+                        edgecolors=edge_color_map['Defense'], linewidths=2,
+                        label='Defense', alpha=0.7, zorder=3)
+    scat_ball = ax.scatter([], [], s=6**2, c=main_color_map['Ball'],
+                        edgecolors=edge_color_map['Ball'], linewidths=1,
+                        label='Ball', alpha=1.0, zorder=5)
     
     ax.legend(
         loc='center left',
         bbox_to_anchor=(.9, 1.085),
     )
 
-    ax = _add_game_info_text(ax, play, game)
+    home_colors = {
+        'c1': offense_c1 if home_team_is_offense else defense_c1,
+        'c2': offense_c2 if home_team_is_offense else defense_c1,
+    }
+    away_colors = {
+        'c1': defense_c1 if home_team_is_offense else offense_c1,
+        'c2': defense_c1 if home_team_is_offense else offense_c2,
+    }
+
+    ax = _add_game_info_text(ax, play, game, home_colors, away_colors)
 
     position_texts = []
     def update(frame_tuple):
@@ -142,9 +195,9 @@ def animate_play(
         def_data = frame_data[frame_data['player_side'] == 'Defense']
         ball_data = frame_data[frame_data['player_side'] == 'Ball']
 
-        scat_off.set_data(off_data['x'], off_data['y'])
-        scat_def.set_data(def_data['x'], def_data['y'])
-        scat_ball.set_data(ball_data['x'], ball_data['y'])
+        scat_off.set_offsets(off_data[['x', 'y']].values)
+        scat_def.set_offsets(def_data[['x', 'y']].values)
+        scat_ball.set_offsets(ball_data[['x', 'y']].values)
 
         # Clear old texts
         for txt in position_texts:
@@ -255,44 +308,89 @@ def _plot_yardlines(ax, min_x, max_x) -> plt.Axes:
 
     return ax
 
-def _add_game_info_text(ax, play: pd.DataFrame, game: pd.DataFrame) -> plt.Axes:
+def _add_game_info_text(
+    ax, 
+    play: pd.DataFrame, 
+    game: pd.DataFrame,
+    home_colors: Dict,
+    away_colors: Dict
+) -> plt.Axes:
+    # Extract basic info
     home_team = game['home_team_abbr'].values[0]
     away_team = game['visitor_team_abbr'].values[0]
-    offense = play['possession_team'].values[0]
-    offense_score = play['pre_snap_home_score'].values[0] \
-        if play['possession_team'].values[0] == home_team \
-        else play['pre_snap_visitor_score'].values[0]
-    defense = play['defensive_team'].values[0]
-    defense_score = play['pre_snap_visitor_score'].values[0] \
-        if play['defensive_team'].values[0] == away_team \
-        else play['pre_snap_home_score'].values[0]
+    home_score = play['pre_snap_home_score'].values[0]
+    away_score = play['pre_snap_visitor_score'].values[0]
     quarter = play['quarter'].values[0]
     game_clock = play['game_clock'].values[0]
     down = play['down'].values[0]
     distance = play['yards_to_go'].values[0]
-    play_description = play['play_description'].values[0] +\
-        f" Pass traveled {int(play['pass_distance'].values[0])} yards in the air in" +\
-        f" {play['num_frames_output'].values[0] / 10:.1f} seconds."
+
+    # Description text
+    play_description = (
+        play['play_description'].values[0]
+        + f" Pass traveled {int(play['pass_distance'].values[0])} yards in the air"
+        + f" in {play['num_frames_output'].values[0] / 10:.1f} seconds."
+    )
     if play_description.startswith('('):
         play_description = play_description.split(')', 1)[1].strip()
 
     down_mapper = {1: '1st', 2: '2nd', 3: '3rd', 4: '4th'}
-    play_info = (f"{away_team} @ {home_team} | "
-                 f"{offense} {offense_score} - {defense} {defense_score} | "
-                 f"Q{quarter} {game_clock} | "
-                 f"{down_mapper[down]} & {distance}")
 
-    ax.set_title(loc='left', y=1.12, label=play_info, fontsize=16, 
-                 fontweight='bold', ha='left', va='top')
+    # === Custom title line built from separate text elements ===
+    base_y = 1.12
+    x_cursor = 0.01
+    font_size = 16
 
+    # Away team abbreviation
+    txt = ax.text(
+        x_cursor, base_y, away_team,
+        color=away_colors['c1'], fontsize=font_size, fontweight='bold',
+        va='top', ha='left', transform=ax.transAxes,
+        path_effects=[pe.withStroke(linewidth=2, foreground=away_colors['c2'])]
+    )
+    ax.figure.canvas.draw()  # needed to get text width
+    renderer = ax.figure.canvas.get_renderer()
+    text_bbox = txt.get_window_extent(renderer=renderer)
+    # Convert bbox width from pixels to Axes coordinates
+    x_cursor += (text_bbox.width / ax.figure.bbox.width) + .02
+
+    # Away score + @
+    text_segment = f" {away_score} @ "
+    txt = ax.text(
+        x_cursor, base_y, text_segment,
+        color='black', fontsize=font_size, fontweight='bold',
+        va='top', ha='left', transform=ax.transAxes,
+    )
+    ax.figure.canvas.draw()
+    text_bbox = txt.get_window_extent(renderer=renderer)
+    x_cursor += (text_bbox.width / ax.figure.bbox.width) + .02
+
+    # Home team abbreviation (styled)
+    txt = ax.text(
+        x_cursor, base_y, home_team,
+        color=home_colors['c1'], fontsize=font_size, fontweight='bold',
+        va='top', ha='left', transform=ax.transAxes,
+        path_effects=[pe.withStroke(linewidth=2, foreground=home_colors['c2'])]
+    )
+    ax.figure.canvas.draw()
+    text_bbox = txt.get_window_extent(renderer=renderer)
+    x_cursor += (text_bbox.width / ax.figure.bbox.width) + .02
+
+    # Home score + rest of info
+    text_segment = (f" {home_score} | Q{quarter} {game_clock} | "
+                    f"{down_mapper[down]} & {distance}")
+    ax.text(
+        x_cursor, base_y, text_segment,
+        color='black', fontsize=font_size, fontweight='bold',
+        va='top', ha='left', transform=ax.transAxes
+    )
+
+    # === Play description (wrapped) ===
     wrapped_text = textwrap.fill(play_description, width=100)
     ax.text(
-        0, 1.07, wrapped_text,
-        ha='left',
-        va='top',
-        transform=ax.transAxes,
-        fontsize=10,
-        wrap=True
+        0.01, base_y - 0.05, wrapped_text,
+        ha='left', va='top', transform=ax.transAxes,
+        fontsize=10, wrap=True, color='black'
     )
 
     return ax
