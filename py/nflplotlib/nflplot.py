@@ -84,6 +84,10 @@ def animate_play(
     # Add horizontal lines at top and bottom of the field
     ax.axhline(y=0, color='grey', linestyle='-', alpha=.5, zorder=1)
     ax.axhline(y=53.3, color='grey', linestyle='-', alpha=.5, zorder=1)
+
+    # Add vertical lines at ends of field
+    ax.axvline(x=0, color='grey', linestyle='-', alpha=.5, zorder=1)
+    ax.axvline(x=120, color='grey', linestyle='-', alpha=.5, zorder=1)
     
     ax = _plot_yardline_numbers(ax, min_x, max_x)
 
@@ -190,6 +194,27 @@ def animate_play(
     }
 
     ax = _add_game_info_text(ax, play, game, home_colors, away_colors)
+
+    if min_x < 10:
+        # plot the defense team endzone
+        ax.add_patch(plt.Rectangle((0, 0), 10, 53.3, color='grey', alpha=0.1, zorder=0))
+        ax.text(
+            5, 53.3/2, team_desc.query('team_abbr == @defense').team_nick.values[0].upper(),
+            fontsize=60, fontweight='bold', alpha=.5, #style='italic',
+            rotation=90, ha='center', va='center', zorder=1,
+            color=defense_c1,
+            path_effects=[pe.withStroke(linewidth=7, foreground=defense_c2)]  # Outline
+        )
+    if max_x > 110:
+        # plot the offense team endzone
+        ax.add_patch(plt.Rectangle((110, 0), 10, 53.3, color='grey', alpha=0.1, zorder=0))
+        ax.text(
+            115, 53.3/2, team_desc.query('team_abbr == @offense').team_nick.values[0].upper(),
+            fontsize=60, fontweight='bold', alpha=.5, #style='italic',
+            rotation=-90, ha='center', va='center', zorder=1,
+            color=offense_c1, 
+            path_effects=[pe.withStroke(linewidth=7, foreground=offense_c2)]  # Outline
+        )
 
     position_texts = []
     def update(frame_tuple):
