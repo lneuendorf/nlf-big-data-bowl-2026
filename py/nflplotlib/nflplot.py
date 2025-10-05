@@ -171,6 +171,10 @@ def animate_play(
                         edgecolors=edge_color_map['Ball'], linewidths=1,
                         label='Ball', alpha=1.0, zorder=5)
     
+    # Dashed trajectory line for the ball (initially empty)
+    (ball_path_line,) = ax.plot([], [], linestyle='--', color='brown', linewidth=2,
+                            alpha=0.8, zorder=3)
+    
     ax.legend(
         loc='center left',
         bbox_to_anchor=(.9, 1.085),
@@ -199,29 +203,42 @@ def animate_play(
         scat_def.set_offsets(def_data[['x', 'y']].values)
         scat_ball.set_offsets(ball_data[['x', 'y']].values)
 
-        # Clear old texts
+        # Plot dashed ball trajectory starting at pass_thrown
+        current_frame_id = frame_id
+        thrown_frames = tracking_play[
+            (tracking_play['frame_id'] <= current_frame_id)
+            & (tracking_play['pass_thrown'] == True)
+            & (tracking_play['player_side'] == 'Ball')
+        ]
+
+        # Update the dashed trajectory line
+        if not thrown_frames.empty:
+            ball_path_line.set_data(thrown_frames['x'].values, thrown_frames['y'].values)
+        else:
+            ball_path_line.set_data([], [])
+
+        # --- Positions text ---
         for txt in position_texts:
             txt.remove()
         position_texts.clear()
-
         if plot_positions:
             for _, row in off_data.iterrows():
                 t = ax.text(
-                    row['x']+.05, row['y']-.05, row['position'],
+                    row['x'] + 0.05, row['y'] - 0.05, row['position'],
                     color='black', fontsize=6, ha='center', va='center',
                     fontweight='bold', zorder=4
                 )
                 position_texts.append(t)
             for _, row in def_data.iterrows():
                 t = ax.text(
-                    row['x']+.05, row['y']-.05, row['position'],
+                    row['x'] + 0.05, row['y'] - 0.05, row['position'],
                     color='black', fontsize=6, ha='center', va='center',
                     fontweight='bold', zorder=4
                 )
                 position_texts.append(t)
 
-        # Return all artists so they’re redrawn each frame
-        return [scat_off, scat_def, scat_ball, *position_texts]
+        # Return all animated artists
+        return [scat_off, scat_def, scat_ball, ball_path_line, *position_texts]
 
     # Create animation
     ani = animation.FuncAnimation(
@@ -385,7 +402,7 @@ def _add_game_info_text(
         va='top', ha='left', transform=ax.transAxes
     )
 
-    # === Play description (wrapped) ===
+    # Play description (wrapped)
     wrapped_text = textwrap.fill(play_description, width=100)
     ax.text(
         0.01, base_y - 0.05, wrapped_text,
