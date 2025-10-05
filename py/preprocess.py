@@ -15,11 +15,34 @@ LOG = logging.getLogger(__name__)
 
 DATA_DIR = '../data/'
 
+def process_data(
+    tracking_input: pd.DataFrame,
+    tracking_output: pd.DataFrame,
+    sup_data: pd.DataFrame
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Process the raw data files into cleaned and standardized DataFrames.
+
+    Args:
+        tracking_input: The input tracking data.
+        tracking_output: The output tracking data.
+        sup_data: Supplemental data.    
+
+    Returns:
+        The games, plays, players and tracking DataFrames.
+    """
+    games, plays, players, tracking = join_split_standardize(
+        tracking_input, tracking_output, sup_data
+    )
+    games, plays, tracking = add_nfl_pbp_info(games, plays, tracking)
+    tracking = approximate_ball_position(tracking, plays)
+
+    return games, plays, players, tracking
+
 def join_split_standardize(
     tracking_input: pd.DataFrame,
     tracking_output: pd.DataFrame,
     sup_data: pd.DataFrame
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """ Join the input and output tracking data. Split the data int plays, players and 
     tracking. Standardize the direction of the play and the players to be vertical, 
     where the offense is moving from the bottom to the top of the field.
@@ -35,7 +58,7 @@ def join_split_standardize(
         sup_data: Supplemental data.
 
     Returns:
-        The plays, players and tracking data with the direction standardized.
+        The games, plays, players and tracking data with the direction standardized.
     """
 
     # Create a unique identifier for each game + play combination
@@ -110,7 +133,13 @@ def join_split_standardize(
     LOG.info('Joining supplemental data to plays DataFrame')
     plays = join_supplemental_data(plays, sup_data)
 
-    return plays, players, tracking    
+    games = plays[['game_id','season','week','game_date','game_time_eastern',
+        'home_team_abbr','visitor_team_abbr',]].drop_duplicates().reset_index(drop=True)
+    
+    plays.drop(columns=['game_date','game_time_eastern',
+        'home_team_abbr','visitor_team_abbr'], inplace=True)
+
+    return games, plays, players, tracking  
 
 def _standardize_direction(
     tracking: pd.DataFrame,
@@ -249,7 +278,6 @@ def approximate_ball_position(
     Returns:
         The tracking data with the ball position approximated.
     """
-    breakpoint()
     return tracking
 
 def join_supplemental_data(
@@ -295,16 +323,18 @@ def join_supplemental_data(
  'yards_gained','air_yards','yards_after_catch','weather','roof','temp','wind']
 
 def add_nfl_pbp_info(
+    games: pd.DataFrame,
     plays: pd.DataFrame,
     tracking: pd.DataFrame
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Add NFL PBP information to the plays and tracking DataFrames.
 
     Args:
+        games: The games DataFrame.
         plays: The plays DataFrame.
         tracking: The tracking DataFrame.
     Returns:
-        The plays and tracking DataFrames with the NFL PBP information added.
+        The games, plays and tracking DataFrames with the NFL PBP information added.
     """
     seasons = plays.season.unique().tolist()
 
@@ -360,12 +390,21 @@ def add_nfl_pbp_info(
             next((item['nfl_id'] for item in player_id_to_nfl_id if item['player_id'] == x), np.nan)
         )
 
-    # Merge relevant PBP columns to plays and tracking DataFrames
-    play_pbp_cols = ['gpid', 'yards_gained','air_yards','yards_after_catch','weather',
-                     'roof','temp','wind']
+    # Merge relevant PBP columns to plays
+    play_pbp_cols = ['gpid', 'yards_gained','air_yards','yards_after_catch']
     plays = plays.merge(
         pbp[play_pbp_cols],
         on='gpid',
+        how='left'
+    )
+
+    # Merge relevant PBP columns to games
+    game_pbp_cols = ['old_game_id','weather','roof','temp','wind']
+    games = games.merge(
+        pbp[game_pbp_cols].drop_duplicates(['old_game_id'])
+            .rename(columns={'old_game_id': 'game_id'})
+                .assign(game_id=lambda df: df['game_id'].astype(int)),
+        on='game_id',
         how='left'
     )
 
@@ -405,4 +444,4 @@ def add_nfl_pbp_info(
         )
         tracking = tracking.drop(columns=['passer_nfl_id'])
 
-    return plays, tracking
+    return games, plays, tracking
