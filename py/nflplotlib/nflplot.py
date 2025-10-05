@@ -184,7 +184,7 @@ def animate_play(
     
     ax.legend(
         loc='center left',
-        bbox_to_anchor=(.9, 1.085),
+        bbox_to_anchor=(.93, 1.085),
     )
 
     home_colors = {
@@ -381,8 +381,13 @@ def _add_game_info_text(
 
     down_mapper = {1: '1st', 2: '2nd', 3: '3rd', 4: '4th'}
 
+    n_row_play_description = int(np.ceil(len(play_description) / 100))
+
     # === Custom title line built from separate text elements ===
-    base_y = 1.12
+    base_y = np.select(
+        [n_row_play_description == 2, n_row_play_description >= 3],
+        [1.12, 1.15], default=1.09
+    )
     x_cursor = 0.01
     font_size = 16
 
