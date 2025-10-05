@@ -44,8 +44,8 @@ def join_split_standardize(
     sup_data: pd.DataFrame
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """ Join the input and output tracking data. Split the data int plays, players and 
-    tracking. Standardize the direction of the play and the players to be vertical, 
-    where the offense is moving from the bottom to the top of the field.
+    tracking. Standardize the direction of the play and the players to be left to right, 
+    where the offense is moving from the left to the right.
 
     NOTE: Imputing the missing speeds in the output data is very accurate (>.99 R²),
     but the missing accelerations are very inaccurate (~.05 R²). The missing
@@ -119,8 +119,8 @@ def join_split_standardize(
     LOG.info('Joined input and output tracking data: %d unique plays, %d unique nfl_ids',
                 n_unique_gpid, n_unique_nflid)
 
-    # Standardize the direction of the play and the players to be vertical
-    LOG.info('Standardizing direction of play and players to be vertical')
+    # Standardize the direction of the play and the players to be left to right
+    LOG.info('Standardizing direction of play and players to be left to right')
     tracking, plays = _standardize_direction(tracking, plays)
 
     # Approximate missing speed, acceleration and direction values for the output frames
@@ -145,7 +145,7 @@ def _standardize_direction(
     tracking: pd.DataFrame,
     play: pd.DataFrame
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """Standardize the direction of the play and the players to be vertical.
+    """Standardize the direction of the play and the players to be left to right,
 
     The direction of the play is set to be bottom to top, with the offensive
     moving from the bottom to the top.
@@ -164,28 +164,28 @@ def _standardize_direction(
     )
     left_play = tracking['play_direction'] == 'left'
     
-    # Standardize the player data to be vertical
+    # Standardize the player data to be left to right
     original_x = tracking['x'].copy()
     original_y = tracking['y'].copy()
     original_dir = tracking['dir'].copy()
     original_o = tracking['o'].copy()
     tracking['x'] = np.where(
         left_play, 
-        original_y,
-        53.3 - original_y
+        120 - original_x,
+        original_x
     )
     tracking['y'] = np.where(
         left_play, 
-        120 - original_x,
-        original_x
+        53.3 - original_y,
+        original_y
     )
     tracking['dir'] = np.where(
         original_dir.isna(),
         np.nan,
         np.where(
             left_play,
-            (((180 - original_dir) % 360) + 180) % 360,
-            (180 - original_dir) % 360
+            (original_dir + 180) % 360,
+            original_dir
         )
     )
     tracking['o'] = np.where(
@@ -193,13 +193,13 @@ def _standardize_direction(
         np.nan,
         np.where(
             left_play,
-            (((180 - original_o) % 360) + 180) % 360,
-            (180 - original_o) % 360
+            (original_o + 180) % 360,
+            original_o
         )
     )
     tracking = tracking.drop('play_direction', axis=1)
 
-    # Standardize the play data to be vertical
+    # Standardize the play data to be left to right
     play['absolute_yardline_number'] = np.where(
         play.play_direction == "left", 
         120 - play.absolute_yardline_number, 
@@ -209,13 +209,13 @@ def _standardize_direction(
     original_ball_land_y = play['ball_land_y'].copy()
     play['ball_land_x'] = np.where(
         play.play_direction == "left", 
-        original_ball_land_y,
-        53.3 - original_ball_land_y
+        120 - original_ball_land_x,
+        original_ball_land_x
     )
     play['ball_land_y'] = np.where(
         play.play_direction == "left", 
-        120 - original_ball_land_x,
-        original_ball_land_x
+        53.3 - original_ball_land_y,
+        original_ball_land_y
     )
     play = play.drop('play_direction', axis=1)
 
@@ -567,5 +567,5 @@ def estimate_ball_path(
 
     tracking = pd.concat([tracking, ball_paths, *air_dfs], ignore_index=True)
     tracking = tracking.sort_values(['gpid', 'nfl_id', 'frame_id'], ignore_index=True)
-    
+
     return tracking
