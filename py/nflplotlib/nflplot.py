@@ -77,15 +77,15 @@ def animate_play(
     ax.spines['left'].set_visible(False)
         
     # Add vertical yard lines every 5 yards on the x-axis
-    for yard_line in range(int(np.ceil(min_x)), int(np.floor(max_x)) + 1):
+    for yard_line in range(max(int(np.ceil(min_x)), 10), min(int(np.floor(max_x)), 110) + 1):
         if yard_line % 5 == 0:  # Every 5 yards
-            ax.axvline(x=yard_line, color='gray', linestyle='-', alpha=0.5)
+            ax.axvline(x=yard_line, color='gray', linestyle='-', alpha=0.5, zorder=1)
 
     # Add horizontal lines at top and bottom of the field
-    ax.axhline(y=0, color='grey', linestyle='-', alpha=.5)
-    ax.axhline(y=53.3, color='grey', linestyle='-', alpha=.5)
+    ax.axhline(y=0, color='grey', linestyle='-', alpha=.5, zorder=1)
+    ax.axhline(y=53.3, color='grey', linestyle='-', alpha=.5, zorder=1)
     
-    ax = _plot_yardlines(ax, min_x, max_x)
+    ax = _plot_yardline_numbers(ax, min_x, max_x)
 
     # NFL hash marks (18'6" apart on inner edges)
     hash_width = .33
@@ -95,21 +95,21 @@ def animate_play(
         ((53.3/2 * 3) + (18.5 / 2)) / 3 + hash_width,
         53.3 - hash_width
     ]
-    for yard_line in range(int(np.ceil(min_x)), int(np.floor(max_x)) + 1):
+    for yard_line in range(max(int(np.ceil(min_x)), 10), min(int(np.floor(max_x)), 110) + 1):
         # Only draw hash marks for yards not divisible by 5
         if yard_line % 5 != 0:
             # Draw hash marks at both hash positions
             for hash_y in hash_y_positions:
                 ax.plot([yard_line, yard_line], [hash_y - hash_width, hash_y + hash_width], 
-                    color='gray', linestyle='-', alpha=0.7, linewidth=1)
+                    color='gray', linestyle='-', alpha=0.7, linewidth=1, zorder=1)
                 
     # Plot the line of scrimmage
     los_x = play['absolute_yardline_number'].values[0]
-    ax.axvline(x=los_x, color='blue', linestyle='-', alpha=0.8, linewidth=2)
+    ax.axvline(x=los_x, color='blue', linestyle='-', alpha=0.8, linewidth=2, zorder=2)
 
     # Plot the first down line
     ytg = play['yards_to_go'].values[0]
-    ax.axvline(x=los_x + ytg, color='yellow', linestyle='-', alpha=0.8, linewidth=2)
+    ax.axvline(x=los_x + ytg, color='yellow', linestyle='-', alpha=0.8, linewidth=2, zorder=2)
 
     # Colors by side
     def is_color_darker(color1, color2):
@@ -259,7 +259,7 @@ def animate_play(
         plt.close(fig)
         return HTML(ani.to_jshtml())
     
-def _plot_yardlines(ax, min_x, max_x) -> plt.Axes:
+def _plot_yardline_numbers(ax, min_x, max_x) -> plt.Axes:
     yardline_positions = [10, 20, 30, 40, 50, 40, 30, 20, 10]
     yardline_x_positions = [20, 30, 40, 50, 60, 70, 80, 90, 100]
 
@@ -276,10 +276,10 @@ def _plot_yardlines(ax, min_x, max_x) -> plt.Axes:
         if yardline == 50:
             ax.text(x_pos, 12, str(yardline),
                     ha='center', va='center',
-                    fontsize=14, fontweight='bold', color='grey')
+                    fontsize=14, fontweight='bold', color='grey', zorder=1)
             ax.text(x_pos, 53.3 - 12, str(yardline),
                     ha='center', va='center',
-                    fontsize=14, fontweight='bold', rotation=180, color='grey')
+                    fontsize=14, fontweight='bold', rotation=180, color='grey', zorder=1)
             continue
 
         # Determine triangle direction (left for left side, right for right side)
@@ -288,39 +288,39 @@ def _plot_yardlines(ax, min_x, max_x) -> plt.Axes:
         # --- Bottom numbers (upright) ---
         ax.text(x_pos, 12, str(yardline),
                 ha='center', va='center',
-                fontsize=14, fontweight='bold', color='grey')
+                fontsize=14, fontweight='bold', color='grey', zorder=1)
         triangle_y = 12.1
         if is_left_side:
             triangle_x = x_pos - triangle_offset
             triangle = plt.Polygon([[triangle_x, triangle_y],
                                     [triangle_x + triangle_length, triangle_y - triangle_height / 2],
                                     [triangle_x + triangle_length, triangle_y + triangle_height / 2]],
-                                   closed=True, color='grey')
+                                   closed=True, color='grey', zorder=1)
         else:
             triangle_x = x_pos + triangle_offset
             triangle = plt.Polygon([[triangle_x, triangle_y],
                                     [triangle_x - triangle_length+.2, triangle_y - triangle_height / 2],
                                     [triangle_x - triangle_length+.2, triangle_y + triangle_height / 2]],
-                                   closed=True, color='grey')
+                                   closed=True, color='grey', zorder=1)
         ax.add_patch(triangle)
 
         # --- Top numbers (upside down) ---
         ax.text(x_pos, 53.3 - 12, str(yardline),
                 ha='center', va='center',
-                fontsize=14, fontweight='bold', rotation=180, color='grey')
+                fontsize=14, fontweight='bold', rotation=180, color='grey', zorder=1)
         triangle_y = 53.3 - 12.2
         if is_left_side:
             triangle_x = x_pos - triangle_offset
             triangle = plt.Polygon([[triangle_x, triangle_y],
                                     [triangle_x + triangle_length, triangle_y - triangle_height / 2],
                                     [triangle_x + triangle_length, triangle_y + triangle_height / 2]],
-                                   closed=True, color='grey')
+                                   closed=True, color='grey', zorder=1)
         else:
             triangle_x = x_pos + triangle_offset
             triangle = plt.Polygon([[triangle_x, triangle_y],
                                     [triangle_x - triangle_length+.2, triangle_y - triangle_height / 2],
                                     [triangle_x - triangle_length+.2, triangle_y + triangle_height / 2]],
-                                   closed=True, color='grey')
+                                   closed=True, color='grey', zorder=1)
         ax.add_patch(triangle)
 
     return ax
