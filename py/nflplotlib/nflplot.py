@@ -53,6 +53,9 @@ def animate_play(
     else:
         min_x = min_x - 2  # Add 2 yard buffer
         max_x = max_x + 2  # Add 2 yard buffer
+
+    min_x = 0 if min_x < 10 else min_x
+    max_x = 120 if max_x > 110 else max_x
     
     # Ensure bounds are within reasonable field limits
     min_x = max(0, min_x)
@@ -60,7 +63,7 @@ def animate_play(
 
     # --- Plot setup ---
     fig, ax = plt.subplots(figsize=(10, 7))
-    ax.set_xlim(min_x, max_x)
+    ax.set_xlim(min_x-.1, max_x+.1)
     ax.set_ylim(-0.1, 53.4)  # Field width becomes y-axis
     # ax.set_aspect('equal') # Equal aspect ratio between x and y axes
     
@@ -146,13 +149,13 @@ def animate_play(
         def_main, def_edge = defense_c2, defense_c1
 
     main_color_map = {
-        'Offense': off_main,
-        'Defense': def_main,
+        'Offense': off_edge,
+        'Defense': def_edge,
         'Ball': 'brown'
     }
     edge_color_map = {
-        'Offense': off_edge, 
-        'Defense': def_edge,
+        'Offense': off_main, 
+        'Defense': def_main,
         'Ball': 'black'
     }
     
@@ -190,7 +193,7 @@ def animate_play(
     }
     away_colors = {
         'c1': defense_c1 if home_team_is_offense else offense_c1,
-        'c2': defense_c1 if home_team_is_offense else offense_c2,
+        'c2': defense_c2 if home_team_is_offense else offense_c2,
     }
 
     ax = _add_game_info_text(ax, play, game, home_colors, away_colors)
