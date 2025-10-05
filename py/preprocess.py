@@ -34,7 +34,7 @@ def process_data(
         tracking_input, tracking_output, sup_data
     )
     games, plays, tracking = add_nfl_pbp_info(games, plays, tracking)
-    tracking = estimate_ball_path(tracking, plays)
+    tracking, plays = estimate_ball_path(tracking, plays)
 
     return games, plays, players, tracking
 
@@ -437,6 +437,17 @@ def add_nfl_pbp_info(
 
     return games, plays, tracking
 
+def fetch_team_desc() -> pd.DataFrame():
+    team_desc_file = os.path.join(DATA_DIR, 'team_desc.parquet')
+    if os.path.exists(team_desc_file):
+        LOG.info('Loading team description info from cached parquet.')
+        team_desc = pd.read_parquet(team_desc_file)
+    else:
+        LOG.info('Loading team description info from nfl-data-py.')
+        team_desc = nfl.import_team_desc()
+        team_desc.to_parquet(team_desc_file, index=False)
+    return team_desc
+
 def estimate_ball_path(
     tracking: pd.DataFrame,
     plays: pd.DataFrame
@@ -489,6 +500,7 @@ def estimate_ball_path(
         )
     )
 
+    pass_dists = {}
     air_dfs = []
     for gpid, group in ball_paths.groupby('gpid', sort=False):
         group = group.sort_values('frame_id').copy()
@@ -522,6 +534,7 @@ def estimate_ball_path(
         dx = end_x - start_x
         dy = end_y - start_y
         dist_xy = np.sqrt(dx**2 + dy**2)
+        pass_dists[gpid] = dist_xy
 
         # --- Solve for launch angle θ (in radians) ---
         # θ = arctan((g * t^2) / (2 * R))
@@ -568,4 +581,6 @@ def estimate_ball_path(
     tracking = pd.concat([tracking, ball_paths, *air_dfs], ignore_index=True)
     tracking = tracking.sort_values(['gpid', 'nfl_id', 'frame_id'], ignore_index=True)
 
-    return tracking
+    plays['pass_distance'] = plays['gpid'].map(pass_dists)
+
+    return tracking, plays
