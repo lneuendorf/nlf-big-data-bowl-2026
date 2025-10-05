@@ -8,8 +8,9 @@ import textwrap
 def animate_play(
     tracking_play: pd.DataFrame, 
     play: pd.DataFrame,
-    game: pd.DataFrame = None,
-    save_path: str = None
+    game: pd.DataFrame,
+    save_path: str = None,
+    plot_positions: bool = False
 ):
     """Animate a single play from tracking data.
 
@@ -19,6 +20,8 @@ def animate_play(
         game: Optional DataFrame containing game level data for a single game.
         save_path: Optional path to save the animation as a video file. If None, the 
             animation is displayed inline.
+        plot_positions: If True, player positions (e.g., WR, QB) will be annotated over 
+            the players.
 
     Returns:
         If save_path is None, returns an HTML object containing the animation.
@@ -113,24 +116,28 @@ def animate_play(
     
     # Group by frame for animation
     frames = tracking_play.groupby('frame_id')
+
+    if plot_positions:
+        marker_size=12
+    else:
+        marker_size=8
     
     # Set up scatter plot placeholders for all three groups
-    scat_off, = ax.plot([], [], 'o', color=color_map['Offense'], label='Offense', alpha=0.7, markersize=8)
-    scat_def, = ax.plot([], [], 'o', color=color_map['Defense'], label='Defense', alpha=0.7, markersize=8)
-    scat_ball, = ax.plot([], [], 'o', color=color_map['Ball'], label='Ball', alpha=1.0, markersize=6, markeredgecolor='black')
+    scat_off, = ax.plot([], [], 'o', color=color_map['Offense'], label='Offense', alpha=0.7, markersize=marker_size, zorder=3)
+    scat_def, = ax.plot([], [], 'o', color=color_map['Defense'], label='Defense', alpha=0.7, markersize=marker_size, zorder=3)
+    scat_ball, = ax.plot([], [], 'o', color=color_map['Ball'], label='Ball', alpha=1.0, markersize=6, markeredgecolor='black', zorder=5)
     
     ax.legend(
         loc='center left',
-        bbox_to_anchor=(.9, 1.09),
+        bbox_to_anchor=(.9, 1.085),
     )
 
     ax = _add_game_info_text(ax, play, game)
 
-    # --- Animation update ---
+    position_texts = []
     def update(frame_tuple):
         frame_id, frame_data = frame_tuple
 
-        # Update scatter data for all three groups
         off_data = frame_data[frame_data['player_side'] == 'Offense']
         def_data = frame_data[frame_data['player_side'] == 'Defense']
         ball_data = frame_data[frame_data['player_side'] == 'Ball']
@@ -138,8 +145,30 @@ def animate_play(
         scat_off.set_data(off_data['x'], off_data['y'])
         scat_def.set_data(def_data['x'], def_data['y'])
         scat_ball.set_data(ball_data['x'], ball_data['y'])
-        
-        return scat_off, scat_def, scat_ball
+
+        # Clear old texts
+        for txt in position_texts:
+            txt.remove()
+        position_texts.clear()
+
+        if plot_positions:
+            for _, row in off_data.iterrows():
+                t = ax.text(
+                    row['x']+.05, row['y']-.05, row['position'],
+                    color='black', fontsize=6, ha='center', va='center',
+                    fontweight='bold', zorder=4
+                )
+                position_texts.append(t)
+            for _, row in def_data.iterrows():
+                t = ax.text(
+                    row['x']+.05, row['y']-.05, row['position'],
+                    color='black', fontsize=6, ha='center', va='center',
+                    fontweight='bold', zorder=4
+                )
+                position_texts.append(t)
+
+        # Return all artists so they’re redrawn each frame
+        return [scat_off, scat_def, scat_ball, *position_texts]
 
     # Create animation
     ani = animation.FuncAnimation(
@@ -241,7 +270,9 @@ def _add_game_info_text(ax, play: pd.DataFrame, game: pd.DataFrame) -> plt.Axes:
     game_clock = play['game_clock'].values[0]
     down = play['down'].values[0]
     distance = play['yards_to_go'].values[0]
-    play_description = play['play_description'].values[0]
+    play_description = play['play_description'].values[0] +\
+        f" Pass traveled {int(play['pass_distance'].values[0])} yards in the air in" +\
+        f" {play['num_frames_output'].values[0] / 10:.1f} seconds."
     if play_description.startswith('('):
         play_description = play_description.split(')', 1)[1].strip()
 
