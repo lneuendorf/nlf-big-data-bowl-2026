@@ -26,7 +26,7 @@ Follow these steps to set up the repository and run the notebooks:
         ```
     3. Create an IPython kernel for the environment:
         ```bash 
-        python -m ipykernel install --user --name bdb26 --display-name "Python (bdb26)"
+        python -m ipykernel install --user --name bdb26 --display-name "bdb26"
         ```
 
 3. Run the Notebook
