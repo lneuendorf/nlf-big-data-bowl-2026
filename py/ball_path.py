@@ -30,11 +30,7 @@ def estimate_ball_path(
     tracking = tracking[tracking['gpid'].isin(valid_gpids)].copy()
     plays = plays[plays['gpid'].isin(valid_gpids)].copy()
 
-    # Constants
-    frame_time = 0.1  # seconds between frames
-    g = 9.81  # gravity (m/s^2)
-    yard_to_m = 0.9144  # convert yards to meters
-
+    # --- Set the ball location to the passer location up until the pass is thrown ---
     ball_paths = (
         tracking.copy()
         .query('is_passer')
@@ -61,6 +57,8 @@ def estimate_ball_path(
         )
     )
 
+    # --- Estimate ball path after pass is thrown using origin, destination, & time in air ---
+    frame_time = 0.1  # seconds between frames
     pass_dists = {}
     air_dfs = []
     for gpid, group in ball_paths.groupby('gpid', sort=False):
@@ -70,15 +68,15 @@ def estimate_ball_path(
         play_meta = plays.loc[plays['gpid'] == gpid]
         if play_meta.empty:
             continue
+
         ball_land_x = play_meta['ball_land_x'].values[0]
         ball_land_y = play_meta['ball_land_y'].values[0]
         num_frames_air = play_meta['num_frames_output'].values[0]
 
-        # Find throw start frame (first frame with pass_thrown == True)
         first_air_frame = group.frame_id.max() + 1
 
         # Coordinates where pass leaves QB hand
-        passer_prev = group[(group['frame_id'] == first_air_frame - 1)]
+        passer_prev = group[group['frame_id'] == first_air_frame - 1]
         if passer_prev.empty:
             passer_prev = group[group['frame_id'] == first_air_frame]
         start_x, start_y = passer_prev.iloc[0][['x', 'y']]
@@ -86,34 +84,19 @@ def estimate_ball_path(
         # End coordinates from plays
         end_x, end_y = ball_land_x, ball_land_y
 
-        # --- Compute projectile-like XY trajectory ---
-        # total flight time
-        t_total = round((num_frames_air + 1) * frame_time, 1)
-        t_vals = np.linspace(0, t_total, num_frames_air + 1)
-
         # horizontal distance in yards
         dx = end_x - start_x
         dy = end_y - start_y
         dist_xy = np.sqrt(dx**2 + dy**2)
         pass_dists[gpid] = dist_xy
 
-        # --- Solve for launch angle θ (in radians) ---
-        # θ = arctan((g * t^2) / (2 * R))
-        theta = np.arctan((g * (t_total ** 2)) / (2 * (dist_xy * yard_to_m)))
-
-        # Compute initial velocity v0 in m/s, using vertical motion constraint
-        v0 = (g * t_total) / (2 * np.sin(theta))
-        v0_yards = v0 / yard_to_m  # convert to yards/s
-
-        # --- Parametric x–y assuming equal start/end height ---
-        x_path = start_x + dx * (t_vals / t_total)
-        # Add realistic parabolic height bump based on vertical component
-        arc_height = (v0_yards * np.sin(theta) * (t_total / 2)) / 10  # scale down for visible arc
-        y_path = start_y + dy * (t_vals / t_total) + (-4 * (t_vals - t_total/2)**2 / t_total**2 + 1) * arc_height
+        # --- Linear interpolation between start and end ---
+        x_path = np.linspace(start_x, end_x, num_frames_air + 1)
+        y_path = np.linspace(start_y, end_y, num_frames_air + 1)
 
         # --- Assign ball positions ---
         in_air_frames = range(first_air_frame, first_air_frame + num_frames_air)
-        
+
         # append the in air frames to the group dataframe with all other columns duplicated as above
         air_df = pd.DataFrame({
             'gpid': gpid,
@@ -143,5 +126,4 @@ def estimate_ball_path(
     tracking = tracking.sort_values(['gpid', 'nfl_id', 'frame_id'], ignore_index=True)
 
     plays['pass_distance'] = plays['gpid'].map(pass_dists)
-
     return tracking, plays
