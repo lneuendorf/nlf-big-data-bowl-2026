@@ -24,4 +24,5 @@ dependencies:
   - shap
   - pip
   - pip:
-    - nfl-data-py
+    - nflreadpy
+    - pymc-bart

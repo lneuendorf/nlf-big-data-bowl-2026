@@ -5,7 +5,7 @@ from typing import Tuple
 
 import pandas as pd
 import numpy as np
-import nfl_data_py as nfl
+import nflreadpy as nfl
 
 from ball_path import estimate_ball_path
 
@@ -360,7 +360,7 @@ def add_nfl_pbp_info(
         file_path = os.path.join(DATA_DIR, 'rosters', f'{season}.parquet')
         if not os.path.exists(file_path):
             LOG.info('Caching rosters for season %d', season)
-            rosters = nfl.import_seasonal_rosters(years=[season])
+            rosters = nfl.import_seasonal_rosters(years=[season]).to_pandas()
             rosters.to_parquet(file_path, index=False)
         else:
             LOG.info('Rosters for season %d already cached, loading from parquet', season)
@@ -446,6 +446,6 @@ def fetch_team_desc() -> pd.DataFrame():
         team_desc = pd.read_parquet(team_desc_file)
     else:
         LOG.info('Loading team description info from nfl-data-py.')
-        team_desc = nfl.import_team_desc()
+        team_desc = nfl.import_team_desc().to_pandas()
         team_desc.to_parquet(team_desc_file, index=False)
     return team_desc
