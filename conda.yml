@@ -26,3 +26,5 @@ dependencies:
   - pip:
     - nflreadpy
     - pymc-bart
+    - torch
+    - torchvision
