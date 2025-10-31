@@ -24,6 +24,8 @@ def process_data(
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Process the raw data files into cleaned and standardized DataFrames.
 
+    Note: the ball path estimation returns s, y, a, dir, o as nan for the ball.
+
     Args:
         tracking_input: The input tracking data.
         tracking_output: The output tracking data.
@@ -231,6 +233,8 @@ def _approximate_missing_speed_acceleration_direction(
     tracking = tracking.sort_values(['gpid', 'nfl_id', 'frame_id'], ignore_index=True)
 
     tracking[['x_prev', 'y_prev']] = tracking.groupby(['gpid', 'nfl_id'])[['x', 'y']].shift(1)
+    tracking['x_prev'] = tracking['x_prev'].fillna(tracking['x'])
+    tracking['y_prev'] = tracking['y_prev'].fillna(tracking['y'])
     tracking = tracking.assign(dt=0.1)
     
     # --- 2-point method (prev and current point) ---
@@ -239,7 +243,7 @@ def _approximate_missing_speed_acceleration_direction(
                 (tracking['y'] - tracking['y_prev'])**2) / tracking['dt'],
         2)
     tracking['a_approx'] = np.round(
-        (tracking['s_approx'] - tracking.groupby(['gpid', 'nfl_id'])['s_approx'].shift(1)) / 
+        (tracking['s_approx'] - tracking.groupby(['gpid', 'nfl_id'])['s_approx'].shift(1)).fillna(tracking['s_approx']) /
         tracking['dt'], 2)
     tracking['dir_approx'] = np.round(
         np.degrees(np.arctan2(tracking['y'] - tracking['y_prev'], 
