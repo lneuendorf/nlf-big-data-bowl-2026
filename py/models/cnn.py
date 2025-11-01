@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, r2_score
 import numpy as np
 import pandas as pd
 
@@ -184,59 +185,87 @@ class FrameDataset(Dataset):
 
 # ---------- CNN definition ----------
 class SpatialCNN(nn.Module):
-    def __init__(self, in_channels, embedding_dim=32):
+    def __init__(self, in_channels, embedding_dim=32, dropout_rate=0.25):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.pool = nn.AdaptiveAvgPool2d(1)
-        self.fc_embed = nn.Linear(64, embedding_dim)
-        self.fc_out = nn.Linear(embedding_dim, 1)  # predict EPA
+
+        self.conv1 = nn.Conv2d(in_channels, 16, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(16)
+
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(32)
+
+        self.pool = nn.AdaptiveAvgPool2d(1)  # squeezes (3×2) → (1×1)
+        self.dropout = nn.Dropout(dropout_rate)
+
+        self.fc_embed = nn.Linear(32, embedding_dim)
+        self.fc_out = nn.Linear(embedding_dim, 1)
 
     def forward(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = self.pool(x)  # (batch, 64, 1, 1)
-        x = x.view(x.size(0), -1)
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = self.pool(x)  # -> (batch, 32, 1, 1)
+        x = x.view(x.size(0), -1)  # -> (batch, 32)
+        x = self.dropout(x)
         embedding = self.fc_embed(x)
-        output = self.fc_out(embedding).squeeze(-1)
+        output = self.fc_out(F.relu(embedding)).squeeze(-1)
         return output, embedding
 
 # ---------- Training setup ----------
-def train_cnn(gpid_list, frames_list, epa_list, embedding_dim=32, batch_size=16, lr=1e-3,
-              epochs=200, patience=5):
-    
-    # Split data into training and validation sets based on unique gpids
+def train_cnn(
+    gpid_list, frames_list, epa_list,
+    embedding_dim=32, batch_size=16, lr=5e-4,
+    epochs=200, patience=5, weight_decay=1e-4,
+    dropout_rate=0.3, device=None
+):
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Training on device: {device}")
+
+    # --- Split data by gpid (80/10/10 train/val/test) ---
     unique_gpids = list(set(gpid_list))
-    gpids_train, gpids_val = train_test_split(unique_gpids, test_size=0.2, random_state=42)
-    
-    train_indices = [i for i, gpid in enumerate(gpid_list) if gpid in gpids_train]
-    val_indices = [i for i, gpid in enumerate(gpid_list) if gpid in gpids_val]
-    
-    frames_train = [frames_list[i] for i in train_indices]
-    frames_val = [frames_list[i] for i in val_indices]
-    epa_train = [epa_list[i] for i in train_indices]
-    epa_val = [epa_list[i] for i in val_indices]
-    
+    gpids_train, gpids_temp = train_test_split(unique_gpids, test_size=0.2, random_state=42)
+    gpids_val, gpids_test = train_test_split(gpids_temp, test_size=0.5, random_state=42)
+
+    def select_indices(gpids_subset):
+        return [i for i, gpid in enumerate(gpid_list) if gpid in gpids_subset]
+
+    train_indices = select_indices(gpids_train)
+    val_indices = select_indices(gpids_val)
+    test_indices = select_indices(gpids_test)
+
+    def subset(lst, indices):
+        return [lst[i] for i in indices]
+
+    frames_train, epa_train = subset(frames_list, train_indices), subset(epa_list, train_indices)
+    frames_val, epa_val = subset(frames_list, val_indices), subset(epa_list, val_indices)
+    frames_test, epa_test = subset(frames_list, test_indices), subset(epa_list, test_indices)
+
+    # --- Datasets & Loaders ---
     train_dataset = FrameDataset(frames_train, epa_train)
     val_dataset = FrameDataset(frames_val, epa_val)
+    test_dataset = FrameDataset(frames_test, epa_test)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
+    # --- Model setup ---
     in_channels = frames_list[0].shape[0]
-    model = SpatialCNN(in_channels, embedding_dim)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    model = SpatialCNN(in_channels, embedding_dim, dropout_rate).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     criterion = nn.MSELoss()
 
     best_loss = float("inf")
     no_improve = 0
+    best_embeddings = None
 
+    # --- Training loop ---
     for epoch in range(epochs):
         model.train()
         epoch_loss = 0
         for X_batch, y_batch in train_loader:
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device).float()
             optimizer.zero_grad()
             preds, _ = model(X_batch)
-            loss = criterion(preds, y_batch.float())
+            loss = criterion(preds, y_batch)
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item() * X_batch.size(0)
@@ -247,8 +276,9 @@ def train_cnn(gpid_list, frames_list, epa_list, embedding_dim=32, batch_size=16,
         val_loss = 0
         with torch.no_grad():
             for X_val, y_val in val_loader:
+                X_val, y_val = X_val.to(device), y_val.to(device).float()
                 preds, _ = model(X_val)
-                val_loss += criterion(preds, y_val.float()).item() * X_val.size(0)
+                val_loss += criterion(preds, y_val).item() * X_val.size(0)
         val_loss /= len(val_dataset)
         print(f"Epoch {epoch+1}/{epochs} - Train MSE: {epoch_loss:.4f} - Val MSE: {val_loss:.4f}")
 
@@ -256,18 +286,41 @@ def train_cnn(gpid_list, frames_list, epa_list, embedding_dim=32, batch_size=16,
         if val_loss < best_loss:
             best_loss = val_loss
             no_improve = 0
-            # Save embeddings from validation set (optional)
+
+            # Save embeddings from validation set
+            all_embeds = []
             with torch.no_grad():
-                all_val = torch.stack([torch.tensor(frame, dtype=torch.float32) for frame in frames_val])
-                _, embeddings = model(all_val)
-                best_embeddings = embeddings.detach().numpy()
+                for X_val, _ in val_loader:
+                    X_val = X_val.to(device)
+                    _, emb = model(X_val)
+                    all_embeds.append(emb.cpu().numpy())
+            best_embeddings = np.concatenate(all_embeds, axis=0)
+            best_model_state = model.state_dict()
         else:
             no_improve += 1
             if no_improve >= patience:
                 print("Early stopping triggered")
                 break
 
+    # --- Load best model for testing ---
+    model.load_state_dict(best_model_state)
+    model.eval()
+
+    y_true, y_pred = [], []
+    with torch.no_grad():
+        for X_test, y_test in test_loader:
+            X_test = X_test.to(device)
+            preds, _ = model(X_test)
+            y_true.extend(y_test.numpy())
+            y_pred.extend(preds.cpu().numpy())
+
+    test_mse = mean_squared_error(y_true, y_pred)
+    test_rmse = np.sqrt(test_mse)
+    test_r2 = r2_score(y_true, y_pred)
+    print(f"\nTest Results — MSE: {test_mse:.4f} | RMSE: {test_rmse:.4f} | R²: {test_r2:.4f}")
+
     return model, best_embeddings
+
 
 def save_cnn_model(model, save_path=SAVE_PATH):
     """
