@@ -21,7 +21,7 @@ LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # ---------- Configurables ----------
-N_WEEKS = 1
+N_WEEKS = 18
 RANDOM_SEED = 2
 np.random.seed(RANDOM_SEED)
 
