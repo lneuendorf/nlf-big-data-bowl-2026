@@ -202,13 +202,21 @@ class SpatialCNN(nn.Module):
         return output, embedding
 
 # ---------- Training setup ----------
-def train_cnn(frames_list, epa_list, embedding_dim=32, batch_size=16, lr=1e-3,
+def train_cnn(gpid_list, frames_list, epa_list, embedding_dim=32, batch_size=16, lr=1e-3,
               epochs=200, patience=5):
-
-    # Split data into training and validation sets
-    frames_train, frames_val, epa_train, epa_val = train_test_split(
-        frames_list, epa_list, test_size=0.2, random_state=42
-    )
+    
+    # Split data into training and validation sets based on unique gpids
+    unique_gpids = list(set(gpid_list))
+    gpids_train, gpids_val = train_test_split(unique_gpids, test_size=0.2, random_state=42)
+    
+    train_indices = [i for i, gpid in enumerate(gpid_list) if gpid in gpids_train]
+    val_indices = [i for i, gpid in enumerate(gpid_list) if gpid in gpids_val]
+    
+    frames_train = [frames_list[i] for i in train_indices]
+    frames_val = [frames_list[i] for i in val_indices]
+    epa_train = [epa_list[i] for i in train_indices]
+    epa_val = [epa_list[i] for i in val_indices]
+    
     train_dataset = FrameDataset(frames_train, epa_train)
     val_dataset = FrameDataset(frames_val, epa_val)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)

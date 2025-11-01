@@ -52,16 +52,18 @@ tracking["s_y"] = tracking["s"] * np.sin(tracking["dir"])
 
 # ---------- Convert Data to Grid Tensors ----------
 LOG.info('Converting tracking data to spatial grid tensors')
+gpid_list = []
 frames_list = []
 epa_list = []
 n_groups = tracking.drop_duplicates(['gpid', 'frame_id']).shape[0]
 for (gpid, frame_id), frame_df in tqdm(tracking.groupby(['gpid', 'frame_id']), total=n_groups, desc="Processing frames"):
+    gpid_list.append(gpid)
     frames_list.append(make_spatial_grid(frame_df))
     epa_list.append(frame_df['epa'].iloc[0])
 
 # ---------- Train CNN Model ----------
 LOG.info('Training CNN model')
-model, embeddings_np = train_cnn(frames_list, epa_list)
+model, embeddings_np = train_cnn(gpid_list, frames_list, epa_list)
 
 # ---------- Save model weights ----------
 LOG.info('Saving CNN model weights')
