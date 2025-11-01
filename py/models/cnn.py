@@ -1,9 +1,14 @@
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
+from sklearn.model_selection import train_test_split
 import numpy as np
 import pandas as pd
+
+# ---------- Path Config ----------
+SAVE_PATH = '../../data/models/cnn_model_weights.pth'
 
 def format_data_for_cnn_training(tracking):
     """
@@ -176,7 +181,7 @@ class FrameDataset(Dataset):
 
 # ---------- CNN definition ----------
 class SpatialCNN(nn.Module):
-    def __init__(self, in_channels, embedding_dim=64):
+    def __init__(self, in_channels, embedding_dim=32):
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
@@ -194,10 +199,17 @@ class SpatialCNN(nn.Module):
         return output, embedding
 
 # ---------- Training setup ----------
-def train_cnn(frames_list, epa_list, embedding_dim=64, batch_size=16, lr=1e-3,
-              epochs=50, patience=5):
-    dataset = FrameDataset(frames_list, epa_list)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+def train_cnn(frames_list, epa_list, embedding_dim=32, batch_size=16, lr=1e-3,
+              epochs=200, patience=5):
+
+    # Split data into training and validation sets
+    frames_train, frames_val, epa_train, epa_val = train_test_split(
+        frames_list, epa_list, test_size=0.2, random_state=42
+    )
+    train_dataset = FrameDataset(frames_train, epa_train)
+    val_dataset = FrameDataset(frames_val, epa_val)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     in_channels = frames_list[0].shape[0]
     model = SpatialCNN(in_channels, embedding_dim)
@@ -210,26 +222,33 @@ def train_cnn(frames_list, epa_list, embedding_dim=64, batch_size=16, lr=1e-3,
     for epoch in range(epochs):
         model.train()
         epoch_loss = 0
-        for X_batch, y_batch in loader:
+        for X_batch, y_batch in train_loader:
             optimizer.zero_grad()
             preds, _ = model(X_batch)
             loss = criterion(preds, y_batch.float())
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item() * X_batch.size(0)
+        epoch_loss /= len(train_dataset)
 
-        epoch_loss /= len(dataset)
-        print(f"Epoch {epoch+1}/{epochs} - MSE: {epoch_loss:.4f}")
+        # ---- Validation ----
+        model.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for X_val, y_val in val_loader:
+                preds, _ = model(X_val)
+                val_loss += criterion(preds, y_val.float()).item() * X_val.size(0)
+        val_loss /= len(val_dataset)
+        print(f"Epoch {epoch+1}/{epochs} - Train MSE: {epoch_loss:.4f} - Val MSE: {val_loss:.4f}")
 
-        # Early stopping
-        if epoch_loss < best_loss:
-            best_loss = epoch_loss
+        # ---- Early stopping on validation ----
+        if val_loss < best_loss:
+            best_loss = val_loss
             no_improve = 0
-            # save best model embeddings
-            model.eval()
+            # Save embeddings from validation set (optional)
             with torch.no_grad():
-                all_frames = torch.stack(frames_list)
-                _, embeddings = model(all_frames)
+                all_val = torch.stack([torch.tensor(frame, dtype=torch.float32) for frame in frames_val])
+                _, embeddings = model(all_val)
                 best_embeddings = embeddings.detach().numpy()
         else:
             no_improve += 1
@@ -238,3 +257,18 @@ def train_cnn(frames_list, epa_list, embedding_dim=64, batch_size=16, lr=1e-3,
                 break
 
     return model, best_embeddings
+
+def save_cnn_model(model, save_path=SAVE_PATH):
+    """
+    Save the CNN model weights.
+    """
+    torch.save(model.state_dict(), save_path)
+
+def load_cnn_model(in_channels, embedding_dim=32, load_path=SAVE_PATH):
+    """
+    Load the CNN model with the saved weights.
+    """
+    model = SpatialCNN(in_channels=in_channels, embedding_dim=embedding_dim)
+    model.load_state_dict(torch.load(load_path))
+    model.eval()  # Set the model to evaluation mode
+    return model
