@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 import nflreadpy as nfl
 
-from ball_path import estimate_ball_path
+from preprocess.ball_path import estimate_ball_path
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
