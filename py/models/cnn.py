@@ -8,7 +8,10 @@ import numpy as np
 import pandas as pd
 
 # ---------- Path Config ----------
-SAVE_PATH = '../../data/models/cnn_model_weights.pth'
+MODEL_PATH = '../data/models'
+if not os.path.exists(MODEL_PATH):
+    os.makedirs(MODEL_PATH)
+SAVE_PATH = os.path.join(MODEL_PATH, 'cnn_model_weights.pth')
 
 def format_data_for_cnn_training(tracking):
     """
