@@ -23,7 +23,7 @@ def format_data_for_cnn_training(tracking):
 
     final_cols = [
         "gpid", "frame_id", "nfl_id", "pass_thrown",
-        "player_role", "x", "y", "s", "defender_rank",
+        "player_role", "x", "y", "s", "dir", "defender_rank",
         "epa", "ball_land_x", "ball_land_y"
     ]
 
@@ -69,6 +69,7 @@ def format_data_for_cnn_training(tracking):
                         "x": 0.0,
                         "y": 0.0,
                         "s": 0.0,
+                        "dir": 0.0,
                         "defender_rank": rank,
                         "epa": frame_df["epa"].iloc[0],
                         "ball_land_x": frame_df["ball_land_x"].iloc[0],
@@ -79,19 +80,87 @@ def format_data_for_cnn_training(tracking):
 
     return pd.concat(result, ignore_index=True)
 
-def make_spatial_grid(frame_df, grid_size=32, window_yards=20.0):
-    """
-    Convert one frame of tracking data into an (C, H, W) tensor.
-    C includes positional and velocity channels for each entity.
-    """
-    breakpoint()
+def make_spatial_grid(frame_df):
+
     entities = {
-        "defenders": frame_df.query("player_role == 'Defensive Coverage'").sort_values("defender_rank").head(3),
+        "defenders": (
+            frame_df.query("player_role == 'Defensive Coverage'")
+            .sort_values("defender_rank")
+            .head(3)
+        ),
         "receiver": frame_df.query("player_role == 'Targeted Receiver'").head(1),
         "ball": frame_df.query("player_role == 'Ball'").head(1)
     }
 
-    # TODO: Implement grid creation logic
+    if entities["receiver"].empty or entities["ball"].empty:
+        return None  # skip malformed frames
+
+    receiver = entities["receiver"].iloc[0]
+    ball = entities["ball"].iloc[0]
+
+    # --- Compute defender features ---
+    def_feats = []
+    for _, def_row in entities["defenders"].iterrows():
+        feats = {
+            # 1. defender s_x, s_y
+            "def_sx": def_row["s_x"],
+            "def_sy": def_row["s_y"],
+
+            # 2. defender x,y - receiver x,y
+            "def_rel_rx": def_row["x"] - receiver["x"],
+            "def_rel_ry": def_row["y"] - receiver["y"],
+
+            # 3. defender s_x,y - receiver s_x,y
+            "def_rel_rsx": def_row["s_x"] - receiver["s_x"],
+            "def_rel_rsy": def_row["s_y"] - receiver["s_y"],
+
+            # 4. defender x,y - ball_land x,y
+            "def_rel_bx": def_row["x"] - ball["ball_land_x"],
+            "def_rel_by": def_row["y"] - ball["ball_land_y"],
+
+            # 5. defender s_x,y - ball_land s_x,y (we use ball s components)
+            "def_rel_bsx": def_row["s_x"] - ball["s_x"],
+            "def_rel_bsy": def_row["s_y"] - ball["s_y"],
+        }
+        def_feats.append(list(feats.values()))
+
+    # Pad with zeros if < 3 defenders
+    while len(def_feats) < 3:
+        def_feats.append([0.0] * len(feats))
+
+    # --- Receiver → Ball-land relations ---
+    rec_feats = [
+        receiver["x"] - ball["x"], # rx - bx
+        receiver["y"] - ball["y"], # ry - by
+        receiver["s_x"] - ball["s_x"], # rs_x - bs_x
+        receiver["s_y"] - ball["s_y"],  # rs_y - bs_y
+    ]
+
+    # --- Ball features ---
+    ball_feats = [
+        ball["ball_land_x"] - ball["x"],  # ball x travel to landing
+        ball["ball_land_y"] - ball["y"] # ball y travel to landing
+    ]
+
+    # --- Construct final tensor ---
+    # shape = (8 rows, 3 columns, 2 channels)
+    grid = np.zeros((8, 3, 2), dtype=np.float32)
+
+    # Fill defender-related rows (rows 0–4, columns 0–2)
+    for i in range(0,10,2):  # 5 feature types
+        for j in range(3):  # 3 defenders
+            grid[int(np.floor(i/2)), j, :] = def_feats[j][i], def_feats[j][i + 1]
+
+    # Fill receiver features (rows 5 and 6)
+    for j in range(3):
+        grid[5, j, :] = rec_feats[0], rec_feats[1]  # rx - bx, ry - by
+        grid[6, j, :] = rec_feats[2], rec_feats[3]  # rs_x - bs_x, rs_y - bs_y
+
+    # Fill ball features (row 7)
+    for j in range(3):
+        grid[7, j, :] = ball_feats[0], ball_feats[1]  # ball x travel, ball y travel
+
+    return grid
 
 # ---------- Dataset wrapper ----------
 class FrameDataset(Dataset):
