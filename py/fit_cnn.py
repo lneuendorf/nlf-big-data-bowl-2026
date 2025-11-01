@@ -9,11 +9,12 @@ import pandas as pd
 import numpy as np
 
 sys.path.append('../py')
-import preprocess
-from model_training.cnn import (
+from preprocess import preprocess
+from models.cnn import (
     format_data_for_cnn_training,
     make_spatial_grid,
-    train_cnn
+    train_cnn,
+    save_cnn_model
 )
 
 LOG = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ for week in tqdm(range(1, N_WEEKS+1), desc="Loading weekly data"):
 LOG.info(f'Tracking input shape: {tracking_input.shape}, output shape: {tracking_output.shape}')
 
 # ---------- Preprocess Data ----------
-LOG.info('Preprocessing tracking data...')
+LOG.info('Preprocessing tracking data')
 games, plays, players, tracking = preprocess.process_data(tracking_input, tracking_output, sup_data)
 
 # ---------- Append Play-Level Features ----------
@@ -44,25 +45,26 @@ tracking = tracking.merge(
 ).rename(columns={'expected_points_added': 'epa'})
 
 # ---------- Format Tracking Data ----------
-LOG.info('Formatting data for CNN training...')
+LOG.info('Formatting data for CNN training')
 tracking = format_data_for_cnn_training(tracking)
 tracking["s_x"] = tracking["s"] * np.cos(tracking["dir"])
 tracking["s_y"] = tracking["s"] * np.sin(tracking["dir"])
 
 # ---------- Convert Data to Grid Tensors ----------
-LOG.info('Converting tracking data to spatial grid tensors...')
+LOG.info('Converting tracking data to spatial grid tensors')
 frames_list = []
 epa_list = []
-for (gpid, frame_id), frame_df in tracking.groupby(['gpid', 'frame_id']):
+n_groups = tracking.drop_duplicates(['gpid', 'frame_id']).shape[0]
+for (gpid, frame_id), frame_df in tqdm(tracking.groupby(['gpid', 'frame_id']), total=n_groups, desc="Processing frames"):
     frames_list.append(make_spatial_grid(frame_df))
     epa_list.append(frame_df['epa'].iloc[0])
 
 # ---------- Train CNN Model ----------
-LOG.info('Training CNN model...')
+LOG.info('Training CNN model')
 model, embeddings_np = train_cnn(frames_list, epa_list)
 
-# ---------- Save Embeddings ----------
-LOG.info('Saving CNN embeddings...')
+# ---------- Save model weights ----------
+LOG.info('Saving CNN model weights')
 os.mkdir('../data') if not os.path.exists('../data') else None
 os.mkdir('../data/models') if not os.path.exists('../data/models') else None
-np.save('../data/models/cnn_embeddings.npy', embeddings_np)
+save_cnn_model(model, '../../data/models/cnn_model_weights.pth')
