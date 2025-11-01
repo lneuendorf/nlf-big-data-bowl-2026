@@ -67,4 +67,4 @@ model, embeddings_np = train_cnn(frames_list, epa_list)
 LOG.info('Saving CNN model weights')
 os.mkdir('../data') if not os.path.exists('../data') else None
 os.mkdir('../data/models') if not os.path.exists('../data/models') else None
-save_cnn_model(model, '../../data/models/cnn_model_weights.pth')
+save_cnn_model(model, '../data/models/cnn_model_weights.pth')
