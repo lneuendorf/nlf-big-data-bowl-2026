@@ -43,9 +43,9 @@ def estimate_ball_path(tracking: pd.DataFrame, plays: pd.DataFrame) -> pd.DataFr
             position='Ball',
             x=lambda df: np.where(df.pass_thrown, np.nan, df.x),
             y=lambda df: np.where(df.pass_thrown, np.nan, df.y),
-            s=0.0,  # stationary before throw
+            s=lambda df: np.where(df.pass_thrown, np.nan, df.s),
             a=np.nan,
-            dir=0.0, # direction undefined before throw
+            dir=lambda df: np.where(df.pass_thrown, np.nan, df.dir),
             o=np.nan,
             is_passer=False,
             is_receiver=False,
@@ -87,7 +87,7 @@ def estimate_ball_path(tracking: pd.DataFrame, plays: pd.DataFrame) -> pd.DataFr
 
         total_time = num_frames_air * frame_time
         ball_speed = dist_xy / total_time if total_time > 0 else 0.0
-        ball_dir = np.arctan2(dy, dx)  # radians
+        ball_dir = round(np.degrees(np.arctan2(dy, dx)) % 360, 2)
 
         # --- Linear interpolation for positions ---
         x_path = np.linspace(start_x, end_x, num_frames_air + 1)

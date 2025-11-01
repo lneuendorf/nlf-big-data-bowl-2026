@@ -47,8 +47,8 @@ tracking = tracking.merge(
 # ---------- Format Tracking Data ----------
 LOG.info('Formatting data for CNN training')
 tracking = format_data_for_cnn_training(tracking)
-tracking["s_x"] = tracking["s"] * np.cos(tracking["dir"])
-tracking["s_y"] = tracking["s"] * np.sin(tracking["dir"])
+tracking["s_x"] = tracking["s"] * np.cos(np.radians(tracking["dir"]))
+tracking["s_y"] = tracking["s"] * np.sin(np.radians(tracking["dir"]))
 
 # ---------- Convert Data to Grid Tensors ----------
 LOG.info('Converting tracking data to spatial grid tensors')

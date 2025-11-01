@@ -40,6 +40,8 @@ def process_data(
     games, plays, tracking = add_nfl_pbp_info(games, plays, tracking)
     tracking, plays = estimate_ball_path(tracking, plays)
 
+    tracking = set_direction(tracking)
+
     return games, plays, players, tracking
 
 def join_split_standardize(
@@ -144,6 +146,26 @@ def join_split_standardize(
         'home_team_abbr','visitor_team_abbr'], inplace=True)
 
     return games, plays, players, tracking  
+
+def set_direction(tracking: pd.DataFrame) -> pd.DataFrame:
+    """ Set the direction of each player at each frame based on their next position. """
+    tracking = tracking.sort_values(['gpid', 'nfl_id', 'frame_id'], ignore_index=True)
+    
+    tracking['x_next'] = tracking.groupby(['gpid', 'nfl_id'])['x'].shift(-1)
+    tracking['y_next'] = tracking.groupby(['gpid', 'nfl_id'])['y'].shift(-1)
+    
+    # Direction in radians
+    tracking['dir'] = np.round(
+        np.degrees(np.arctan2(tracking['y_next'] - tracking['y'], 
+                   tracking['x_next'] - tracking['x'])) % 360, 2
+    )
+    
+    tracking = tracking.drop(columns=['x_next', 'y_next'])
+    
+    tracking['dir'] = tracking.groupby(['gpid', 'nfl_id'])['dir'].bfill()
+    tracking['dir'] = tracking.groupby(['gpid', 'nfl_id'])['dir'].ffill()
+    
+    return tracking
 
 def _standardize_direction(
     tracking: pd.DataFrame,

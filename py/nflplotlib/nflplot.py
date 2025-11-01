@@ -6,6 +6,7 @@ import matplotlib.patheffects as pe
 import pandas as pd
 import numpy as np
 from IPython.display import HTML
+from matplotlib.patches import FancyArrowPatch
 
 def animate_play(
     tracking_play: pd.DataFrame, 
@@ -16,6 +17,7 @@ def animate_play(
     plot_positions: bool = False,
     highlight_postpass_players:bool = False,
     show_postpass_paths: bool = False,
+    plot_arrows: bool = False,  # New parameter to enable arrows
 ):
     """Animate a single play from tracking data.
 
@@ -32,6 +34,8 @@ def animate_play(
             is thrown will be highlighted.
         show_postpass_paths: If True, dashed lines will be drawn showing the paths of
             players involved in the pass after the ball is thrown.
+        plot_arrows: If True, arrows will be drawn to indicate the direction of movement
+            for players and the ball.
 
     Returns:
         If save_path is None, returns an HTML object containing the animation.
@@ -227,6 +231,7 @@ def animate_play(
 
     position_texts = []
     player_path_lines = {}  # For post-pass paths
+    arrows = []  # For movement arrows
 
     def update(frame_tuple):
         frame_id, frame_data = frame_tuple
@@ -323,8 +328,33 @@ def animate_play(
                 )
                 position_texts.append(t)
 
+        
+        # --- Plot arrows for movement ---
+        if plot_arrows:
+            # Remove previous arrows
+            for arrow in arrows:
+                arrow.remove()
+            arrows.clear()
+
+            # Add new arrows for each player and the ball
+            for _, row in frame_data.iterrows():
+                x, y = row['x'], row['y']
+                length = 3.0 
+                angle_rad = np.radians(row['dir'])
+
+                dx = length * np.cos(angle_rad)
+                dy = length * np.sin(angle_rad)
+
+                arrow = FancyArrowPatch(
+                    posA=(x, y),
+                    posB=(x + dx, y + dy),
+                    arrowstyle='-|>', color='grey', mutation_scale=15, linewidth=2, zorder=3
+                )
+                ax.add_patch(arrow)
+                arrows.append(arrow)
+
         # Collect all active artists
-        animated_artists = [scat_off, scat_def, scat_ball, ball_path_line, *position_texts]
+        animated_artists = [scat_off, scat_def, scat_ball, ball_path_line, *position_texts, *arrows]
         animated_artists.extend(player_path_lines.values())
 
         return animated_artists
