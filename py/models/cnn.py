@@ -214,7 +214,7 @@ class SpatialCNN(nn.Module):
 def train_cnn(
     gpid_list, frames_list, epa_list,
     embedding_dim=32, batch_size=16, lr=5e-4,
-    epochs=200, patience=5, weight_decay=1e-4,
+    epochs=1000, patience=5, weight_decay=1e-4,
     dropout_rate=0.3, device=None
 ):
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -335,7 +335,11 @@ def train_cnn(
     all_true, all_pred, all_gpid = [], [], []
     with torch.no_grad():
         for i in range(0, len(all_frames), batch_size):
-            X_batch = torch.stack(all_frames[i:i+batch_size]).to(device)
+            batch_frames = [
+                torch.tensor(f, dtype=torch.float32) if not isinstance(f, torch.Tensor) else f
+                for f in all_frames[i:i+batch_size]
+            ]
+            X_batch = torch.stack(batch_frames).to(device)
             y_batch = torch.tensor(all_epa[i:i+batch_size]).float()
             preds, _ = model(X_batch)
             all_true.extend(y_batch.numpy())
