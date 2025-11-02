@@ -306,21 +306,73 @@ def train_cnn(
     model.load_state_dict(best_model_state)
     model.eval()
 
-    y_true, y_pred = [], []
+    # --- Predict on test set ---
+    y_true_test, y_pred_test = [], []
     with torch.no_grad():
         for X_test, y_test in test_loader:
             X_test = X_test.to(device)
             preds, _ = model(X_test)
-            y_true.extend(y_test.numpy())
-            y_pred.extend(preds.cpu().numpy())
+            y_true_test.extend(y_test.numpy())
+            y_pred_test.extend(preds.cpu().numpy())
 
-    test_mse = mean_squared_error(y_true, y_pred)
+    # --- Compute overall test metrics ---
+    test_mse = mean_squared_error(y_true_test, y_pred_test)
     test_rmse = np.sqrt(test_mse)
-    test_r2 = r2_score(y_true, y_pred)
+    test_r2 = r2_score(y_true_test, y_pred_test)
     print(f"\nTest Results — MSE: {test_mse:.4f} | RMSE: {test_rmse:.4f} | R²: {test_r2:.4f}")
 
-    return model, best_embeddings
+    # ----------------------------------------------------
+    # --- Evaluate by % of play using all (train+val+test) data ---
+    # ----------------------------------------------------
+    print("\nComputing binned metrics across all plays...")
 
+    # --- Combine all data ---
+    all_frames = frames_list
+    all_epa = epa_list
+    all_gpids = gpid_list
+
+    # --- Predict on all data ---
+    all_true, all_pred, all_gpid = [], [], []
+    with torch.no_grad():
+        for i in range(0, len(all_frames), batch_size):
+            X_batch = torch.stack(all_frames[i:i+batch_size]).to(device)
+            y_batch = torch.tensor(all_epa[i:i+batch_size]).float()
+            preds, _ = model(X_batch)
+            all_true.extend(y_batch.numpy())
+            all_pred.extend(preds.cpu().numpy())
+            all_gpid.extend(all_gpids[i:i+batch_size])
+
+    # --- Build DataFrame ---
+    df_all = pd.DataFrame({
+        "gpid": all_gpid,
+        "y_true": all_true,
+        "y_pred": all_pred
+    })
+
+    # Compute play progression (frame index normalized per gpid)
+    df_all["frame_idx"] = df_all.groupby("gpid").cumcount()
+    df_all["frame_count"] = df_all.groupby("gpid")["frame_idx"].transform("max") + 1
+    df_all["pct_into_play"] = df_all["frame_idx"] / df_all["frame_count"]
+
+    # Bin by 20% increments
+    df_all["pct_bin"] = pd.cut(
+        df_all["pct_into_play"],
+        bins=np.linspace(0, 1, 6),
+        labels=["0–20%", "20–40%", "40–60%", "60–80%", "80–100%"],
+        include_lowest=True
+    )
+
+    # --- Compute metrics for each bin ---
+    print("\n--- All Data Metrics by % of Play ---")
+    for bin_label, group in df_all.groupby("pct_bin"):
+        if len(group) < 5:
+            continue
+        mse_bin = mean_squared_error(group["y_true"], group["y_pred"])
+        rmse_bin = np.sqrt(mse_bin)
+        r2_bin = r2_score(group["y_true"], group["y_pred"])
+        print(f"{bin_label:>8} | n={len(group):5d} | MSE: {mse_bin:.4f} | RMSE: {rmse_bin:.4f} | R²: {r2_bin:.4f}")
+
+    return model, best_embeddings
 
 def save_cnn_model(model, save_path=SAVE_PATH):
     """
