@@ -61,7 +61,7 @@ class SafetyReachDataset:
     def _select_valid_plays(
         self, tracking: pd.DataFrame, plays: pd.DataFrame
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """Keep plays with a safety present and any pass_thrown=True frame."""
+        """Keep plays with a safety present after pass is thrown."""
         mask = tracking["position"].isin(self._safety_positions()) & tracking["pass_thrown"].astype(bool)
         valid_gpids = tracking.loc[mask, "gpid"].unique()
         tracking_f = tracking[tracking["gpid"].isin(valid_gpids)].copy()
@@ -124,6 +124,9 @@ class SafetyReachDataset:
     ) -> pd.DataFrame:
         """Build features/labels at snapshot frame for safeties."""
         saf = tracking.loc[tracking["position"].isin(self._safety_positions())].copy()
+        saf['gpid_nflid'] = saf['gpid'].astype(str) + '_' + saf['nfl_id'].astype(str)
+        safties_to_keep = saf.query('pass_thrown==True')['gpid_nflid'].unique()
+        saf = saf[saf['gpid_nflid'].isin(safties_to_keep)].copy().drop(columns=['gpid_nflid'])
         saf = saf.merge(snap_frames, on="gpid", how="left")
         saf = saf.loc[saf["frame_id"] == saf["snapshot_frame"]]
 
