@@ -3,3 +3,7 @@ data/
 __pycache__/
 *.pyc
 commit.sh
+settings.json
+.vscode/
+todo.txt
+todo.md
