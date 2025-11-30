@@ -1,14 +1,15 @@
 from typing import Dict, List, Tuple
 import logging
-from tqdm import tqdm
 from pathlib import Path
 import pandas as pd
 import numpy as np
 import json
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader, random_split
+import random
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 LOG = logging.getLogger(__name__)
@@ -16,27 +17,69 @@ LOG = logging.getLogger(__name__)
 MODELS_DIR = Path("/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/models/path_prediction/")
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
+SEED = 2
+
+# Global seeding for numpy / python / torch
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(SEED)
+# Make CUDA deterministic (may slow training)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
 class PathPredictionDataset(Dataset):
-    """Dataset class for path prediction"""
-    def __init__(self, processed_plays: List[Dict]):
+    """Dataset class for path prediction with padding for variable-length sequences"""
+    def __init__(self, processed_plays: List[Dict], max_sequence_length: int = None):
         self.processed_plays = processed_plays
+        self.max_sequence_length = max_sequence_length or self._get_max_sequence_length()
+        
+    def _get_max_sequence_length(self) -> int:
+        """Find the maximum sequence length in the dataset"""
+        max_len = max(len(play['frames']) for play in self.processed_plays)
+        LOG.info(f"Maximum sequence length in dataset: {max_len}")
+        return max_len
         
     def __len__(self):
         return len(self.processed_plays)
     
     def __getitem__(self, idx):
         play = self.processed_plays[idx]
+        seq_len = len(play['frames'])
+        
+        # Create sequence mask (1 for real data, 0 for padding)
+        sequence_mask = torch.zeros(self.max_sequence_length)
+        sequence_mask[:seq_len] = 1.0
+        
+        # Pad sequences to max_sequence_length
+        def pad_tensor(tensor, target_length):
+            current_length = tensor.shape[0]
+            if current_length < target_length:
+                # Calculate padding needed
+                pad_length = target_length - current_length
+                # Pad with zeros along the time dimension (dimension 0)
+                padded = torch.cat([
+                    tensor,
+                    torch.zeros(pad_length, *tensor.shape[1:])
+                ], dim=0)
+                return padded
+            elif current_length > target_length:
+                # Truncate if longer (shouldn't happen with proper max_sequence_length)
+                return tensor[:target_length]
+            else:
+                return tensor
         
         return {
-            'safety': torch.FloatTensor(play['safety']),
-            'receiver': torch.FloatTensor(play['receiver']),
-            'ball': torch.FloatTensor(play['ball']),
-            'defenders': torch.FloatTensor(play['defenders']),
-            'defender_mask': torch.FloatTensor(play['mask']),
+            'safety': pad_tensor(torch.FloatTensor(play['safety']), self.max_sequence_length),
+            'receiver': pad_tensor(torch.FloatTensor(play['receiver']), self.max_sequence_length),
+            'ball': pad_tensor(torch.FloatTensor(play['ball']), self.max_sequence_length),
+            'defenders': pad_tensor(torch.FloatTensor(play['defenders']), self.max_sequence_length),
+            'defender_mask': pad_tensor(torch.FloatTensor(play['mask']), self.max_sequence_length),
             'globals': torch.FloatTensor(play['globals']),
-            'target': torch.FloatTensor(play['target']),
-            'frames': torch.LongTensor(play['frames']),
-            'sequence_mask': torch.ones(len(play['frames'])),  # All frames are valid
+            'target': pad_tensor(torch.FloatTensor(play['target']), self.max_sequence_length),
+            'frames': pad_tensor(torch.LongTensor(play['frames']), self.max_sequence_length),
+            'sequence_mask': sequence_mask,
         }
 
 class SocialLSTMPathPrediction(nn.Module):
@@ -47,6 +90,9 @@ class SocialLSTMPathPrediction(nn.Module):
     def __init__(self, config: Dict):
         super().__init__()
         self.config = config
+
+        # Regularization
+        self.dropout = nn.Dropout(config.get('dropout_rate', 0.2))
         
         # Input encoders
         self.safety_encoder = self._build_mlp(
@@ -103,9 +149,6 @@ class SocialLSTMPathPrediction(nn.Module):
             hidden_dims=config['decoder_dims'],
             output_dim=2  # next (x, y_norm)
         )
-        
-        # Regularization
-        self.dropout = nn.Dropout(config.get('dropout_rate', 0.2))
         
     def _build_mlp(self, input_dim: int, hidden_dims: List[int], output_dim: int) -> nn.Sequential:
         layers = []
@@ -184,9 +227,9 @@ class SocialLSTMPathPrediction(nn.Module):
         social_context = self._social_pooling(defenders_encoded, defender_mask)
         
         # Encode global features
-        global_encoded = self.global_encoder(globals_feat.unsqueeze(-1))
-        global_encoded = global_encoded.unsqueeze(1).expand(-1, seq_len, -1)
-        
+        global_encoded = self.global_encoder(globals_feat.unsqueeze(-1))  # (batch_size, 1, embedding_dim)
+        global_encoded = global_encoded.expand(-1, seq_len, -1)  # (batch_size, seq_len, embedding_dim)
+
         # Concatenate ALL features including individual defenders
         lstm_input = torch.cat([
             safety_encoded,           # (batch_size, seq_len, embedding_dim)
@@ -209,7 +252,7 @@ class SocialLSTMPathPrediction(nn.Module):
         return predictions, lstm_out
 
 class PathPredictionTrainer:
-    """Training and evaluation class"""
+    """Training and evaluation class with proper masking"""
     
     def __init__(self, config: Dict):
         self.config = config
@@ -225,13 +268,33 @@ class PathPredictionTrainer:
         self.train_losses = []
         self.val_losses = []
         self.best_val_loss = float('inf')
+        self.patience_counter = 0  # Initialize patience counter
         
+    def compute_masked_loss(self, predictions: torch.Tensor, target: torch.Tensor, 
+                          sequence_mask: torch.Tensor) -> torch.Tensor:
+        """
+        Compute loss only on non-padded positions
+        """
+        # Calculate loss per element
+        loss_per_element = self.criterion(predictions, target)
+        
+        # Apply sequence mask (batch_size, seq_len) -> (batch_size, seq_len, 1)
+        masked_loss = (loss_per_element * sequence_mask.unsqueeze(-1)).sum()
+        
+        # Count valid positions (each valid frame has 2 coordinates)
+        valid_positions = sequence_mask.sum() * 2
+        
+        if valid_positions > 0:
+            return masked_loss / valid_positions
+        else:
+            return masked_loss
+    
     def train_epoch(self, train_loader: DataLoader) -> float:
         self.model.train()
         total_loss = 0
         num_batches = 0
         
-        for batch in tqdm(train_loader, desc="Training"):
+        for batch in train_loader:
             # Move batch to device
             batch = {k: v.to(self.device) for k, v in batch.items()}
             
@@ -244,16 +307,7 @@ class PathPredictionTrainer:
             target = batch['target']
             sequence_mask = batch['sequence_mask']
             
-            # Calculate loss only on valid sequence positions
-            loss_per_element = self.criterion(predictions, target)
-            masked_loss = (loss_per_element * sequence_mask.unsqueeze(-1)).sum()
-            valid_positions = sequence_mask.sum() * 2  # *2 for (x,y) coordinates
-            
-            if valid_positions > 0:
-                loss = masked_loss / valid_positions
-            else:
-                loss = masked_loss
-                
+            loss = self.compute_masked_loss(predictions, target, sequence_mask)
             loss.backward()
             
             # Gradient clipping
@@ -272,23 +326,14 @@ class PathPredictionTrainer:
         num_batches = 0
         
         with torch.no_grad():
-            for batch in tqdm(val_loader, desc="Validation"):
+            for batch in val_loader:
                 batch = {k: v.to(self.device) for k, v in batch.items()}
                 
                 predictions, _ = self.model(batch)
-                
                 target = batch['target']
                 sequence_mask = batch['sequence_mask']
                 
-                loss_per_element = self.criterion(predictions, target)
-                masked_loss = (loss_per_element * sequence_mask.unsqueeze(-1)).sum()
-                valid_positions = sequence_mask.sum() * 2
-                
-                if valid_positions > 0:
-                    loss = masked_loss / valid_positions
-                else:
-                    loss = masked_loss
-                    
+                loss = self.compute_masked_loss(predictions, target, sequence_mask)
                 total_loss += loss.item()
                 num_batches += 1
                 
@@ -299,10 +344,11 @@ class PathPredictionTrainer:
         total_loss = 0
         all_predictions = []
         all_targets = []
+        all_masks = []
         num_batches = 0
         
         with torch.no_grad():
-            for batch in tqdm(test_loader, desc="Testing"):
+            for batch in test_loader:
                 batch = {k: v.to(self.device) for k, v in batch.items()}
                 
                 predictions, _ = self.model(batch)
@@ -310,34 +356,40 @@ class PathPredictionTrainer:
                 sequence_mask = batch['sequence_mask']
                 
                 # Calculate loss
-                loss_per_element = self.criterion(predictions, target)
-                masked_loss = (loss_per_element * sequence_mask.unsqueeze(-1)).sum()
-                valid_positions = sequence_mask.sum() * 2
-                
-                if valid_positions > 0:
-                    loss = masked_loss / valid_positions
-                else:
-                    loss = masked_loss
-                    
+                loss = self.compute_masked_loss(predictions, target, sequence_mask)
                 total_loss += loss.item()
                 num_batches += 1
                 
-                # Store predictions and targets for additional metrics
-                all_predictions.append(predictions.cpu().numpy())
-                all_targets.append(target.cpu().numpy())
+                # Store predictions and targets for additional metrics (only non-padded)
+                batch_predictions = predictions.cpu().numpy()
+                batch_targets = target.cpu().numpy()
+                batch_masks = sequence_mask.cpu().numpy()
+                
+                # Only store non-padded elements
+                for i in range(len(batch_predictions)):
+                    valid_indices = batch_masks[i] == 1
+                    if np.any(valid_indices):
+                        all_predictions.append(batch_predictions[i][valid_indices])
+                        all_targets.append(batch_targets[i][valid_indices])
         
-        # Calculate additional metrics
-        predictions_array = np.concatenate(all_predictions)
-        targets_array = np.concatenate(all_targets)
-        
-        # Calculate RMSE
-        mse_per_coord = np.mean((predictions_array - targets_array) ** 2, axis=0)
-        rmse_per_coord = np.sqrt(mse_per_coord)
-        overall_rmse = np.sqrt(np.mean((predictions_array - targets_array) ** 2))
-        
-        # Calculate MAE
-        mae_per_coord = np.mean(np.abs(predictions_array - targets_array), axis=0)
-        overall_mae = np.mean(np.abs(predictions_array - targets_array))
+        # Calculate additional metrics on non-padded data only
+        if all_predictions:
+            predictions_array = np.concatenate(all_predictions)
+            targets_array = np.concatenate(all_targets)
+            
+            # Calculate RMSE
+            mse_per_coord = np.mean((predictions_array - targets_array) ** 2, axis=0)
+            rmse_per_coord = np.sqrt(mse_per_coord)
+            overall_rmse = np.sqrt(np.mean((predictions_array - targets_array) ** 2))
+            
+            # Calculate MAE
+            mae_per_coord = np.mean(np.abs(predictions_array - targets_array), axis=0)
+            overall_mae = np.mean(np.abs(predictions_array - targets_array))
+        else:
+            rmse_per_coord = [0, 0]
+            overall_rmse = 0
+            mae_per_coord = [0, 0]
+            overall_mae = 0
         
         metrics = {
             'average_loss': total_loss / num_batches if num_batches > 0 else 0,
@@ -353,20 +405,19 @@ class PathPredictionTrainer:
     
     def train(self, train_loader: DataLoader, val_loader: DataLoader, 
               test_loader: DataLoader, epochs: int, patience: int = 10):
-        
+
         for epoch in range(epochs):
-            LOG.info(f"Epoch {epoch + 1}/{epochs}")
-            
+
             # Training
             train_loss = self.train_epoch(train_loader)
             self.train_losses.append(train_loss)
-            
+
             # Validation
             val_loss = self.validate(val_loader)
             self.val_losses.append(val_loss)
-            
-            LOG.info(f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
-            
+
+            LOG.info(f"Epoch {epoch + 1}/{epochs}: Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
+
             # Early stopping and model saving
             if val_loss < self.best_val_loss:
                 self.best_val_loss = val_loss
@@ -381,19 +432,18 @@ class PathPredictionTrainer:
                 self.patience_counter = 0
             else:
                 self.patience_counter += 1
-                
+
             if self.patience_counter >= patience:
                 LOG.info(f"Early stopping at epoch {epoch + 1}")
                 break
-        
+
         # Load best model and test
         checkpoint_path = MODELS_DIR / 'best_model.pth'
         checkpoint = torch.load(checkpoint_path.as_posix())
         self.model.load_state_dict(checkpoint['model_state_dict'])
-        
+
         test_metrics = self.test(test_loader)
-        LOG.info(f"Test Metrics: {test_metrics}")
-        
+
         return test_metrics
 
 def train_path_prediction(processed_plays: List[Dict]):
@@ -418,7 +468,7 @@ def train_path_prediction(processed_plays: List[Dict]):
         'patience': 10
     }
     
-    # Create dataset and split
+    # Create dataset with padding
     dataset = PathPredictionDataset(processed_plays)
     
     train_size = int(0.8 * len(dataset))
@@ -442,18 +492,86 @@ def train_path_prediction(processed_plays: List[Dict]):
         patience=config['patience']
     )
     
+    # Save training curves and results
+    plt.figure(figsize=(10, 6))
+    plt.plot(trainer.train_losses, label='Train Loss')
+    plt.plot(trainer.val_losses, label='Validation Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.title('Training and Validation Loss Curve')
+    plt.legend()
+    plt.grid()
+    plt.savefig(MODELS_DIR / 'training_curve.png')
+    plt.close()
+    
+    # Convert all NumPy types to native Python types for JSON serialization
+    def convert_to_serializable(obj):
+        if isinstance(obj, (np.float32, np.float64)):
+            return float(obj)
+        elif isinstance(obj, (np.int32, np.int64)):
+            return int(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, list):
+            return [convert_to_serializable(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {key: convert_to_serializable(value) for key, value in obj.items()}
+        else:
+            return obj
+    
     results = {
         'config': config,
-        'test_metrics': test_metrics,
-        'train_losses': trainer.train_losses,
-        'val_losses': trainer.val_losses
+        'test_metrics': convert_to_serializable(test_metrics),
+        'train_losses': convert_to_serializable(trainer.train_losses),
+        'val_losses': convert_to_serializable(trainer.val_losses)
     }
 
-    LOG.info(f"Final Test Metrics: {test_metrics}")
-    LOG.info(f"Training Losses: {trainer.train_losses}")
-    LOG.info(f"Validation Losses: {trainer.val_losses}")
+    LOG.info(f"Training completed with {len(trainer.train_losses)} epochs")
+    json_test_metrics = convert_to_serializable(test_metrics)
+    LOG.info(f"Final Test Metrics: \n{json.dumps(json_test_metrics, indent=2)}")
     
     with open(MODELS_DIR / 'training_results.json', 'w') as f:
         json.dump(results, f, indent=2)
     
     LOG.info("Training completed!")
+
+def predict_path(processed_plays: List[Dict]) -> pd.DataFrame:
+    LOG.info("Predicting paths using the trained Social LSTM model")
+    # Load best model
+    checkpoint_path = MODELS_DIR / 'best_model.pth'
+    checkpoint = torch.load(checkpoint_path.as_posix())
+    config = checkpoint['config']
+    
+    dataset = PathPredictionDataset(processed_plays)
+    data_loader = DataLoader(dataset, batch_size=config['batch_size'], shuffle=False)
+    
+    model = SocialLSTMPathPrediction(config)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.to(device)
+    
+    all_predictions = []
+    
+    with torch.no_grad():
+        for batch in data_loader:
+            batch = {k: v.to(device) for k, v in batch.items()}
+            predictions, _ = model(batch)
+            predictions = predictions.cpu().numpy()
+            sequence_mask = batch['sequence_mask'].cpu().numpy()
+            frames = batch['frames'].cpu().numpy()
+            
+            for i in range(len(predictions)):
+                valid_indices = sequence_mask[i] == 1
+                for j in range(len(predictions[i])):
+                    if valid_indices[j]:
+                        all_predictions.append({
+                            'gpid': processed_plays[i]['gpid'],
+                            'frame_id': frames[i][j],
+                            'nfl_id': processed_plays[i]['safety_nfl_id'],
+                            'pred_x': predictions[i][j][0],
+                            'pred_y': predictions[i][j][1]
+                        })
+    
+    return pd.DataFrame(all_predictions)

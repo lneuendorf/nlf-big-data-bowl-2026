@@ -115,8 +115,6 @@ class PathPredictionDataset:
         assume one safety per role/frame.
         """
 
-        LOG.info(f"Attaching relative features for safety nfl_id {safety_nfl_id} in {df['gpid'].nunique()} plays")
-
         saf = df[
             (df["nfl_id"] == safety_nfl_id)
         ].loc[:, ["gpid", "frame_id", "nfl_id", "x", "y_norm", "vx", "vy"]].copy()
@@ -260,7 +258,7 @@ class PathPredictionDataset:
                 )
 
         processed = {
-            "gpid": int(play_df["gpid"].unique()[0]),
+            "gpid": play_df["gpid"].unique()[0],
             "safety_nfl_id": int(safety_nfl_id),
             "frames": np.array(frames[:-1], dtype=int),
             "safety": safety_f,

@@ -1,6 +1,8 @@
 import sys
+import os
 import logging
 from tqdm import tqdm
+from pathlib import Path
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -13,10 +15,12 @@ from nflplotlib import nflplot as nfp
 from models.defender_reach.preprocessor import DefenderReachDataset
 from models.defender_reach.model import DefenderReachModel
 from models.path_prediction.preprocessor import PathPredictionDataset
-from models.path_prediction.model import train_path_prediction
+from models.path_prediction.model import train_path_prediction, predict_path
 
 pd.set_option('display.max_columns', None)
 pd.set_option('display.max_rows', None)
+
+USE_TRAINED_PATH_PREDICTION_MODEL = True
 
 LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -126,4 +130,17 @@ df = (
 
 ##############  iv. Predict paths of defenders ##############
 processed_plays = PathPredictionDataset().process(df)
-train_path_prediction(processed_plays)
+if not os.path.exists('../data/models/path_prediction/best_model.pth') or not USE_TRAINED_PATH_PREDICTION_MODEL:
+    train_path_prediction(processed_plays)
+predicted_paths = predict_path(processed_plays)
+predicted_paths = (
+    predicted_paths.merge(
+        df[['gpid', 'frame_id', 'nfl_id', 'x', 'y']].rename(columns={'x':'true_x','y':'true_y'}),
+        on=['gpid','frame_id','nfl_id'],
+        how='left'
+    ).assign(
+        pred_y=lambda x: ((x['pred_y'] + 1.0) / 2.0) * PathPredictionDataset.FIELD_WIDTH
+    )
+)
+Path( '../data/results/').mkdir(parents=True, exist_ok=True)
+predicted_paths.to_csv('../data/results/path_prediction_results.csv', index=False)
