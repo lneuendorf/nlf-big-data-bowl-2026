@@ -13,6 +13,7 @@ from nflplotlib import nflplot as nfp
 from models.defender_reach.preprocessor import DefenderReachDataset
 from models.defender_reach.model import DefenderReachModel
 from models.path_prediction.preprocessor import PathPredictionDataset
+from models.path_prediction.model import train_path_prediction
 
 pd.set_option('display.max_columns', None)
 pd.set_option('display.max_rows', None)
@@ -80,6 +81,7 @@ for gpid in tqdm(gpids_with_over_5_defenders, desc="Filtering plays with over 5 
         LOG.info(f"Dropping gpid {gpid} as it no longer has a safety")
         defender_df = defender_df.query('gpid!=@gpid').copy()
 
+##############  iii. Filter tracking data ###############
 gpids = defender_df['gpid'].unique()
 gpid_nflids = set(defender_df['gpid'] + '_' + defender_df['nfl_id'].astype(str))
 df = (
@@ -121,4 +123,7 @@ df = (
       [['gpid', 'frame_id', 'nfl_id', 'player_role', 'position', 'x', 'y', 's', 'dir',
         'ball_land_x','ball_land_y','zone_coverage','within_10_yards_proba']]
 )
-data = PathPredictionDataset().process(df)
+
+##############  iv. Predict paths of defenders ##############
+processed_plays = PathPredictionDataset().process(df)
+train_path_prediction(processed_plays)
