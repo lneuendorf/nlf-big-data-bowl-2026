@@ -96,7 +96,7 @@ class SocialLSTMPathPrediction(nn.Module):
         
         # Input encoders
         self.safety_encoder = self._build_mlp(
-            input_dim=4,  # [sx_raw, sy_norm, svx, svy]
+            input_dim=4,  # [sx_raw, sy, svx, svy]
             hidden_dims=config['safety_encoder_dims'],
             output_dim=config['embedding_dim']
         )
@@ -147,7 +147,7 @@ class SocialLSTMPathPrediction(nn.Module):
         self.output_decoder = self._build_mlp(
             input_dim=config['lstm_hidden_dim'],
             hidden_dims=config['decoder_dims'],
-            output_dim=2  # next (x, y_norm)
+            output_dim=2  # next (x, y)
         )
         
     def _build_mlp(self, input_dim: int, hidden_dims: List[int], output_dim: int) -> nn.Sequential:

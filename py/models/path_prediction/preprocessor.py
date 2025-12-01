@@ -12,7 +12,7 @@ class PathPredictionDataset:
     Process tracking data for path prediction of defensive players (safeties).
 
     Returns per-play dicts with arrays:
-      - safety:   (T, 4) [sx_raw, sy_norm, svx, svy]
+      - safety:   (T, 4) [sx_raw, sy, svx, svy]
       - receiver: (T, 4) [rx_rel, ry_rel, rvx_rel, rvy_rel]
       - ball:     (T, 7) [bx_rel, by_rel, bvx_rel, bvy_rel, ball_flight_pct, 
                           ball_land_rel_x, ball_land_rel_y]
@@ -34,10 +34,6 @@ class PathPredictionDataset:
         LOG.info(f"Processing path prediction data for {df['gpid'].nunique()} plays")
 
         df = self._compute_velocity_components(df)
-
-        # normalize y to [-1, 1]
-        df["y_norm"] = (df["y"] / self.FIELD_WIDTH) * 2.0 - 1.0
-        df["ball_land_y_norm"] = (df["ball_land_y"] / self.FIELD_WIDTH) * 2.0 - 1.0
 
         df = self._attach_ball_flight_pct(df)
 
@@ -108,7 +104,7 @@ class PathPredictionDataset:
 
     def _attach_relative_features(self, df: pd.DataFrame, safety_nfl_id: int) -> pd.DataFrame:
         """
-        Join safety reference (safety_x, safety_y_norm, safety_vx, safety_vy) per 
+        Join safety reference (safety_x, safety_y, safety_vx, safety_vy) per 
         (gpid, frame_id), then compute rel_x/rel_y/rel_vx/rel_vy for all rows.
 
         If multiple safeties exist for a frame, the merge will pick duplicates; we 
@@ -117,15 +113,15 @@ class PathPredictionDataset:
 
         saf = df[
             (df["nfl_id"] == safety_nfl_id)
-        ].loc[:, ["gpid", "frame_id", "nfl_id", "x", "y_norm", "vx", "vy"]].copy()
+        ].loc[:, ["gpid", "frame_id", "nfl_id", "x", "y", "vx", "vy"]].copy()
         saf = saf.rename(columns={
             "x": "safety_x", 
-            "y_norm": "safety_y_norm", 
+            "y": "safety_y", 
             "vx": "safety_vx", 
             "vy": "safety_vy"
         })
 
-        saf_cols = ["gpid", "frame_id", "safety_x", "safety_y_norm", "safety_vx", "safety_vy"]
+        saf_cols = ["gpid", "frame_id", "safety_x", "safety_y", "safety_vx", "safety_vy"]
         df = df.merge(
             saf.loc[:, saf_cols],
             on=["gpid", "frame_id"],
@@ -133,12 +129,11 @@ class PathPredictionDataset:
             validate="m:1")
 
         df["rel_x"] = df["x"] - df["safety_x"]
-        df["rel_y"] = df["y_norm"] - df["safety_y_norm"]
+        df["rel_y"] = df["y"] - df["safety_y"]
         df["rel_vx"] = df["vx"] - df["safety_vx"]
         df["rel_vy"] = df["vy"] - df["safety_vy"]
         df["ball_land_rel_x"] = df["ball_land_x"] - df["safety_x"]
-        df["ball_land_rel_y"] = df["ball_land_y_norm"] - df["safety_y_norm"]
-
+        df["ball_land_rel_y"] = df["ball_land_y"] - df["safety_y"]
         return df
 
     def _process_play(
@@ -169,7 +164,7 @@ class PathPredictionDataset:
         safety_rows = play_df[play_df["nfl_id"] == safety_nfl_id].sort_values("frame_id")
         if safety_rows.shape[0] == 0:
             return None
-        safety_np = safety_rows.loc[:, ["frame_id", "x", "y_norm", "vx", "vy"]].to_numpy()
+        safety_np = safety_rows.loc[:, ["frame_id", "x", "y", "vx", "vy"]].to_numpy()
         safety_lookup = {int(r[0]): r[1:].tolist() for r in safety_np}
 
         # receiver rows (Targeted Receiver)

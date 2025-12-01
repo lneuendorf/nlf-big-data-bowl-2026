@@ -20,14 +20,14 @@ from models.path_prediction.model import train_path_prediction, predict_path
 pd.set_option('display.max_columns', None)
 pd.set_option('display.max_rows', None)
 
-USE_TRAINED_PATH_PREDICTION_MODEL = True
+USE_TRAINED_PATH_PREDICTION_MODEL = False
 
 LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 RANDOM_SEED = 2
 np.random.seed(RANDOM_SEED)
-N_WEEKS = 1
+N_WEEKS = 18
 
 ##############  i. Load and preprocess the data ##############
 sup_data = pd.read_csv('../data/supplementary_data.csv')
@@ -138,8 +138,6 @@ predicted_paths = (
         df[['gpid', 'frame_id', 'nfl_id', 'x', 'y']].rename(columns={'x':'true_x','y':'true_y'}),
         on=['gpid','frame_id','nfl_id'],
         how='left'
-    ).assign(
-        pred_y=lambda x: ((x['pred_y'] + 1.0) / 2.0) * PathPredictionDataset.FIELD_WIDTH
     )
 )
 Path( '../data/results/').mkdir(parents=True, exist_ok=True)
