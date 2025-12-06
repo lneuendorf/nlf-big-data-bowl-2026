@@ -1,26 +1,18 @@
-import sys
-import os
 import logging
 from tqdm import tqdm
-from pathlib import Path
 import warnings
 warnings.filterwarnings("ignore")
 
 import pandas as pd
-import polars as pl
 import numpy as np
+import torch
 
 from preprocess import preprocess
-from nflplotlib import nflplot as nfp
 from models.defender_reach.preprocessor import DefenderReachDataset
 from models.defender_reach.model import DefenderReachModel
-from models.path_prediction.preprocessor import PathPredictionDataset
-from models.path_prediction.model import train_path_prediction, predict_path
+from models.epa.graph_dataset import EPAGraphDataset
+from models.epa.epa_gnn_model import train_model, evaluate_split
 
-pd.set_option('display.max_columns', None)
-pd.set_option('display.max_rows', None)
-
-USE_TRAINED_PATH_PREDICTION_MODEL = False
 
 LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -38,6 +30,7 @@ for week in tqdm(range(1, N_WEEKS+1), desc="Loading weekly data"):
 LOG.info(f'Tracking input shape: {tracking_input.shape}, output shape: {tracking_output.shape}')
 
 games, plays, players, tracking = preprocess.process_data(tracking_input, tracking_output, sup_data)
+plays['yards_to_goal'] = 110 - plays['absolute_yardline_number']
 team_desc = preprocess.fetch_team_desc()
 
 ##############  ii. Predict if defender is a part of the pass play ##############
@@ -62,37 +55,38 @@ defender_df = (defender_df
     )
 )
 
-gpids_with_over_5_defenders = (
+gpids_with_over_4_defenders = (
     defender_df
         .drop_duplicates(subset=['gpid','nfl_id'])
         .groupby(['gpid']).size()
         .reset_index()
         .rename(columns={0:'n_defenders_involved'})
         .sort_values('n_defenders_involved', ascending=False)
-        .query('n_defenders_involved > 5')
+        .query('n_defenders_involved > 4')
 ).gpid.unique()
 
-# Drop the defender with the lowest probability of being within 10 yards on plays with over 5 defenders until 5 defenders remain
-for gpid in tqdm(gpids_with_over_5_defenders, desc="Filtering plays with over 5 defenders"):
+# Drop the defender with the lowest probability of being within 10 yards on plays with over 4 defenders until 4 defenders remain
+for gpid in tqdm(gpids_with_over_4_defenders, desc="Filtering plays with over 4 defenders"):
     df = defender_df.query('gpid==@gpid').copy()
-    while df.shape[0] > 5:
+    while df.shape[0] > 4:
         min_proba_idx = df['within_10_yards_proba'].idxmin()
         defender_df.drop(index=min_proba_idx, inplace=True)
         df = defender_df.query('gpid==@gpid').copy()
-    
-    # if gpid no longer has a safety, drop the gpid
-    if not defender_df.query('gpid==@gpid and player_position.isin(["FS","SS","S"])').shape[0]:
-        LOG.info(f"Dropping gpid {gpid} as it no longer has a safety")
-        defender_df = defender_df.query('gpid!=@gpid').copy()
+
+# Drop plays with no defenders within 10 yards of the pass landing point
+gpids_with_no_defenders = set(plays['gpid'].unique()) - set(defender_df['gpid'].unique())
+if gpids_with_no_defenders:
+    LOG.info(f"Dropping {len(gpids_with_no_defenders)} plays with no defenders within 10 yards of the pass landing point")
+    defender_df = defender_df[~defender_df['gpid'].isin(gpids_with_no_defenders)].copy()
 
 ##############  iii. Filter tracking data ###############
 gpids = defender_df['gpid'].unique()
-gpid_nflids = set(defender_df['gpid'] + '_' + defender_df['nfl_id'].astype(str))
+defender_gpid_nflids = set(defender_df['gpid'] + '_' + defender_df['nfl_id'].astype(str))
 df = (
     tracking
       .query('gpid in @gpids')
       .assign(gpid_nflid=lambda x: x['gpid'] + '_' + x['nfl_id'].astype(str))
-      .query('gpid_nflid in @gpid_nflids or position=="Ball" or player_role=="Targeted Receiver"')
+      .query('gpid_nflid in @defender_gpid_nflids or position=="Ball" or player_role=="Targeted Receiver"')
       .merge(
           plays[['gpid','absolute_yardline_number','ball_land_x','ball_land_y','team_coverage_man_zone']],
           on='gpid',
@@ -104,21 +98,18 @@ df = (
           ball_land_x=lambda x: x['ball_land_x'] - x['absolute_yardline_number'],
           zone_coverage=lambda x: np.where(x['team_coverage_man_zone'] == "ZONE_COVERAGE", 1, 0)
       )
-      # Only keep frames within 1 second before pass is thrown and after
+      # Only keep last frame of play when ball lands
       .merge(
           tracking
             .query('pass_thrown')
-            .groupby('gpid')['frame_id'].min()
+            .groupby('gpid')['frame_id'].max()
             .reset_index()
-            .rename(columns={'frame_id':'pass_thrown_frame_id'})
-            [['gpid','pass_thrown_frame_id']],
+            .rename(columns={'frame_id':'ball_land_frame_id'})
+            [['gpid','ball_land_frame_id']],
           on='gpid',
           how='left'
       )
-      .assign(
-          one_second_before_pass_frame_id=lambda x: x['pass_thrown_frame_id'] - 10
-      )
-      .query('frame_id >= one_second_before_pass_frame_id')
+      .query('frame_id == ball_land_frame_id')
       .merge(
           defender_df[['gpid','nfl_id','within_10_yards_proba']],
           on=['gpid','nfl_id'],
@@ -128,17 +119,94 @@ df = (
         'ball_land_x','ball_land_y','zone_coverage','within_10_yards_proba']]
 )
 
-##############  iv. Predict paths of defenders ##############
-processed_plays = PathPredictionDataset().process(df)
-if not os.path.exists('../data/models/path_prediction/best_model.pth') or not USE_TRAINED_PATH_PREDICTION_MODEL:
-    train_path_prediction(processed_plays)
-predicted_paths = predict_path(processed_plays)
-predicted_paths = (
-    predicted_paths.merge(
-        df[['gpid', 'frame_id', 'nfl_id', 'x', 'y']].rename(columns={'x':'true_x','y':'true_y'}),
-        on=['gpid','frame_id','nfl_id'],
-        how='left'
-    )
+LOG.info(f"Final number of pass plays: {defender_df['gpid'].nunique()}")
+
+##############  iv. EPA Model Training ###############
+samples = []
+for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for EPA model"):
+    play_tracking = df.query('gpid==@gpid').copy()
+    play = plays.query('gpid==@gpid').iloc[0]
+    assert play_tracking['frame_id'].nunique() == 1, f"More than one frame_id for gpid {gpid}"
+    receiver_row = play_tracking.query('player_role=="Targeted Receiver"').iloc[0]
+    ball_row = play_tracking.query('position=="Ball"').iloc[0]
+    defender_rows = play_tracking.query('position=="Defensive Coverage"').copy()
+
+    receiver = {
+        'x': receiver_row['x'],
+        'y': receiver_row['y'],
+        'vx': receiver_row['s'] * np.cos(np.deg2rad(receiver_row['dir'])),
+        'vy': receiver_row['s'] * np.sin(np.deg2rad(receiver_row['dir']))
+    }
+    ball = {
+        'x': ball_row['x'],
+        'y': ball_row['y'],
+    }
+    defenders = []
+    for _, row in defender_rows.iterrows():
+        defenders.append({
+            'x': row['x'],
+            'y': row['y'],
+            'vx': row['s'] * np.cos(np.deg2rad(row['dir'])),
+            'vy': row['s'] * np.sin(np.deg2rad(row['dir']))
+        })
+    global_features = {
+        'zone_coverage': play_tracking['zone_coverage'].iloc[0],
+        'down': play['down'],
+        'ball_land_yards_to_first_down': max(play['yards_to_go'] - ball_row['x'], 0),
+        'ball_land_yards_to_endzone': min(110 - (play['absolute_yardline_number'] + ball_row['x']), 0)
+    }
+    target_epa = play['expected_points_added']
+
+    sample = {
+        'receiver': receiver,
+        'ball': ball,
+        'defenders': defenders,
+        'global_features': global_features,
+        'target_epa': target_epa
+    }
+    samples.append(sample)
+
+# Split into train, val, test (80/10/10)
+np.random.shuffle(samples)
+n_total = len(samples)
+n_train = int(0.8 * n_total)
+n_val = int(0.1 * n_total)
+train_samples = samples[:n_train]
+val_samples = samples[n_train:n_train + n_val]
+test_samples = samples[n_train + n_val:]
+
+train_dataset = EPAGraphDataset(train_samples)
+val_dataset = EPAGraphDataset(val_samples)
+test_dataset = EPAGraphDataset(test_samples)
+
+model = train_model(
+    train_dataset, 
+    val_dataset, 
+    batch_size=32, 
+    lr=1e-3, 
+    epochs=100, 
+    patience=5
 )
-Path( '../data/results/').mkdir(parents=True, exist_ok=True)
-predicted_paths.to_csv('../data/results/path_prediction_results.csv', index=False)
+
+# ------------------------------
+# Evaluate Model
+# ------------------------------
+train_metrics = evaluate_split(model, train_dataset)
+val_metrics   = evaluate_split(model, val_dataset)
+test_metrics  = evaluate_split(model, test_dataset)
+
+
+
+LOG.info("===== Final EPA Model Evaluation =====")
+LOG.info(f"{'Split':<10} {'MAE':>10} {'SmoothL1':>12} {'MSE':>12} {'RMSE':>12}")
+LOG.info("-" * 60)
+LOG.info(f"{'Train':<10} {train_metrics['MAE']:10.4f} {train_metrics['SmoothL1']:12.4f} "
+      f"{train_metrics['MSE']:12.4f} {train_metrics['RMSE']:12.4f}")
+LOG.info(f"{'Val':<10} {val_metrics['MAE']:10.4f} {val_metrics['SmoothL1']:12.4f} "
+      f"{val_metrics['MSE']:12.4f} {val_metrics['RMSE']:12.4f}")
+LOG.info(f"{'Test':<10} {test_metrics['MAE']:10.4f} {test_metrics['SmoothL1']:12.4f} "
+      f"{test_metrics['MSE']:12.4f} {test_metrics['RMSE']:12.4f}")
+
+LOG.info("Model training and evaluation complete, saving the model")
+SAVE_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/models/epa_gnn_model.pth'
+torch.save(model.state_dict(), SAVE_PATH)

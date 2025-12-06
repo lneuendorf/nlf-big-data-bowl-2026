@@ -28,4 +28,5 @@ dependencies:
     - pymc-bart
     - torch
     - torchvision
+    - torch-geometric
     - polars
