@@ -25,8 +25,7 @@ class DefenderReachDataset:
     # ---- Public orchestrator ----
     def generate_defender_data(self, tracking: pd.DataFrame, plays: pd.DataFrame) -> pd.DataFrame:
         self._validate_inputs(tracking, plays)
-        tracking_f, plays_f = self._select_valid_plays(tracking, plays)
-        tracking_f, plays_f = self._drop_long_airtime_plays(tracking_f, plays_f, max_air_time_s=4.0)
+        tracking_f, plays_f = self._drop_long_airtime_plays(tracking, plays, max_air_time_s=4.0)
         snap_frames = self._compute_snapshot_frame_before_pass(tracking_f)
         defender_df = self._build_defender_features(tracking_f, plays_f, snap_frames)
         return defender_df
@@ -48,19 +47,6 @@ class DefenderReachDataset:
 
     def _defender_positions(self) -> set:
         return {'DE', 'OLB', 'CB', 'SS', 'FS', 'MLB', 'ILB', 'NT', 'DT', 'S', 'LB'}
-
-    def _safety_positions(self) -> set:
-        return {'SS', 'FS', 'S'}
-    
-    def _select_valid_plays(
-        self, tracking: pd.DataFrame, plays: pd.DataFrame
-    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """Keep plays with a safety present after pass is thrown."""
-        mask = tracking["position"].isin(self._safety_positions()) & tracking["pass_thrown"].astype(bool)
-        valid_gpids = tracking.loc[mask, "gpid"].unique()
-        tracking_f = tracking[tracking["gpid"].isin(valid_gpids)].copy()
-        plays_f = plays[plays["gpid"].isin(valid_gpids)].copy()
-        return tracking_f, plays_f
 
     def _drop_long_airtime_plays(
         self, tracking: pd.DataFrame, plays: pd.DataFrame, max_air_time_s: float
