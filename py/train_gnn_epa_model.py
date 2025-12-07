@@ -48,9 +48,6 @@ if not model.check_is_trained():
 model.load()
 defender_df.loc[:, ['within_10_yards_proba', 'within_10_yards_pred']] = model.predict(defender_df)
 
-if 'player_position' in defender_df.columns:
-    defender_df = defender_df.drop(columns=['player_position'])
-    
 defender_df = (defender_df
     .query('within_10_yards_pred==1')
     .reset_index(drop=True)
@@ -140,7 +137,11 @@ for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for EPA model"):
     assert play_tracking['frame_id'].nunique() == 1, f"More than one frame_id for gpid {gpid}"
     receiver_row = play_tracking.query('player_role=="Targeted Receiver"').iloc[0]
     ball_row = play_tracking.query('position=="Ball"').iloc[0]
-    defender_rows = play_tracking.query('position=="Defensive Coverage"').copy()
+    defender_rows = (
+        play_tracking
+          .query('player_role=="Defensive Coverage"')
+          .sort_values('within_10_yards_proba', ascending=False).copy()
+    )
 
     receiver = {
         'x': receiver_row['x'],
@@ -160,11 +161,14 @@ for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for EPA model"):
             'vx': row['s'] * np.cos(np.deg2rad(row['dir'])),
             'vy': row['s'] * np.sin(np.deg2rad(row['dir']))
         })
+    if len(defenders) < 1:
+        raise ValueError(f"No defenders for gpid {gpid}")
     global_features = {
         'zone_coverage': play_tracking['zone_coverage'].iloc[0],
         'down': play['down'],
         'ball_land_yards_to_first_down': max(play['yards_to_go'] - ball_row['x'], 0),
-        'ball_land_yards_to_endzone': min(110 - (play['absolute_yardline_number'] + ball_row['x']), 0)
+        'ball_land_yards_to_endzone': min(110 - (play['absolute_yardline_number'] + ball_row['x']), 0),
+        'pass_distance': play['pass_distance']
     }
     target_epa = play['expected_points_added']
 
@@ -184,7 +188,6 @@ for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for EPA model"):
         test_samples.append(sample)
     else:
         raise ValueError(f"Game ID {game_id} not found in any split")
-
 train_dataset = EPAGraphDataset(train_samples)
 val_dataset = EPAGraphDataset(val_samples)
 test_dataset = EPAGraphDataset(test_samples)

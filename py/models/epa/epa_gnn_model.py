@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import NNConv, global_mean_pool, global_add_pool
+from torch_geometric.nn import NNConv, global_mean_pool
 from torch_geometric.loader import DataLoader
 from torch.optim import AdamW
 import copy
