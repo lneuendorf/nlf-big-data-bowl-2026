@@ -159,5 +159,5 @@ class DefenderReachDataset:
         ]
         cols = [c for c in cols if c in defenders.columns]
         out = defenders[cols].reset_index(drop=True)
-        LOG.info(f"defender dataset built: {out.shape[0]} rows, {len(cols)} cols")
+        LOG.info(f"Defender dataset built: {out.shape[0]} rows, {len(cols)} cols")
         return out

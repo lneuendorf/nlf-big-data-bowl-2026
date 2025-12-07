@@ -1,4 +1,5 @@
 import logging
+import os
 from tqdm import tqdm
 import warnings
 warnings.filterwarnings("ignore")
@@ -19,7 +20,12 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 RANDOM_SEED = 2
 np.random.seed(RANDOM_SEED)
+torch.manual_seed(RANDOM_SEED)
 N_WEEKS = 18
+
+# Was getting segfaults without these settings
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
 
 ##############  i. Load and preprocess the data ##############
 sup_data = pd.read_csv('../data/supplementary_data.csv')
@@ -122,7 +128,12 @@ df = (
 LOG.info(f"Final number of pass plays: {defender_df['gpid'].nunique()}")
 
 ##############  iv. EPA Model Training ###############
-samples = []
+
+# Training games week 1-14, validation week 15-16, test week 17-18
+train_games = games.query('week <= 14')['game_id'].unique()
+val_games = games.query('week >= 15 and week <=16')['game_id'].unique()
+test_games = games.query('week >= 17')['game_id'].unique()
+train_samples, val_samples, test_samples = [], [], []
 for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for EPA model"):
     play_tracking = df.query('gpid==@gpid').copy()
     play = plays.query('gpid==@gpid').iloc[0]
@@ -164,16 +175,15 @@ for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for EPA model"):
         'global_features': global_features,
         'target_epa': target_epa
     }
-    samples.append(sample)
-
-# Split into train, val, test (80/10/10)
-np.random.shuffle(samples)
-n_total = len(samples)
-n_train = int(0.8 * n_total)
-n_val = int(0.1 * n_total)
-train_samples = samples[:n_train]
-val_samples = samples[n_train:n_train + n_val]
-test_samples = samples[n_train + n_val:]
+    game_id = int(gpid.split('_')[0])
+    if game_id in train_games:
+        train_samples.append(sample)
+    elif game_id in val_games:
+        val_samples.append(sample)
+    elif game_id in test_games:
+        test_samples.append(sample)
+    else:
+        raise ValueError(f"Game ID {game_id} not found in any split")
 
 train_dataset = EPAGraphDataset(train_samples)
 val_dataset = EPAGraphDataset(val_samples)
@@ -194,8 +204,6 @@ model = train_model(
 train_metrics = evaluate_split(model, train_dataset)
 val_metrics   = evaluate_split(model, val_dataset)
 test_metrics  = evaluate_split(model, test_dataset)
-
-
 
 LOG.info("===== Final EPA Model Evaluation =====")
 LOG.info(f"{'Split':<10} {'MAE':>10} {'SmoothL1':>12} {'MSE':>12} {'RMSE':>12}")
