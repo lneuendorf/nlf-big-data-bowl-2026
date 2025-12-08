@@ -7,51 +7,25 @@ def simulate_outer_points(
     bin_deg=5,
     dt_sim=0.1,
     sim_time=2.0,
-    max_speed=7,        # 7 yd/s ≈ 14.3 mph (slower than max nfl speed since this is short area)
-    max_acc=7.0,          # 7.0 yd/s² ≈ 6.4 m/s²
-    max_turn_rate=2.0,    #  2.0 rad/s ≈ 115°/s
+    max_speed=7,
+    max_acc=7.0,
+    max_turn_rate=2.0,
     slow_turn_multiplier=2.5
 ):
     """
     Simulate maximum reachable positions in all directions for a player
     with physical constraints over a fixed time horizon.
     
-    For each angular bin (around 360 degrees), simulate forward in small time-steps
-    applying control that tries to reach and maintain speed in the target direction.
-    Handles acceleration, deceleration, and turning to move in all directions.
-    
-    Args:
-        init_pos (ndarray): Initial position [x, y] in yards
-        init_vel (ndarray): Initial velocity [vx, vy] in yards/second
-        bin_deg (float): Angular bin width in degrees. Smaller values give
-                        higher angular resolution (default: 5°)
-        dt_sim (float): Simulation time step in seconds (default: 0.1s = 10Hz)
-        sim_time (float): Total simulation time horizon in seconds (default: 2.0s)
-        max_speed (float): Maximum speed magnitude in yards/second (default: 7.0 yd/s)
-        max_acc (float): Maximum acceleration magnitude in yards/second² (default: 12.0 yd/s²)
-        max_turn_rate (float): Maximum turning rate in radians/second at moderate speed
-                              (default: 3.0 rad/s ≈ 172°/s)
-        slow_turn_multiplier (float): Multiplier for max_turn_rate when speed is very low
-                                     (< 0.5 yd/s). Allows faster rotation in place
-                                     (default: 2.0)
-    
     Returns:
-        tuple: (outer_points, final_vels, angles)
+        tuple: (outer_points, final_vels, angles, all_positions, all_velocities)
             outer_points (ndarray): Shape (n_bins, 2). Maximum reachable positions
                                    in yards for each angular direction after sim_time.
             final_vels (ndarray): Shape (n_bins, 2). Final velocity vectors in yd/s
                                  at each outer point.
             angles (ndarray): Shape (n_bins,). Target angles in radians corresponding
                              to each angular bin (0 to 2π).
-    
-    Note:
-        - The simulation assumes a simple physics model with constant acceleration
-          magnitude limits and speed-dependent turning capability.
-        - At very low speeds (< 0.5 yd/s), turning capability is enhanced to model
-          a player's ability to rotate in place.
-        - The algorithm optimizes control to reach as far as possible in each
-          direction within the time horizon, handling both acceleration and
-          deceleration scenarios.
+            all_positions (list): List of arrays with position history for each angle
+            all_velocities (list): List of arrays with velocity history for each angle
     """
     init_pos = np.array(init_pos, dtype=float)
     init_vel = np.array(init_vel, dtype=float)
@@ -60,11 +34,17 @@ def simulate_outer_points(
     
     outer_points = []
     final_vels = []
+    all_positions = []
+    all_velocities = []
     
     for theta in angles:
         pos = init_pos.copy()
         vel = init_vel.copy()
         speed = np.linalg.norm(vel)
+        
+        # Store position and velocity history for this angle
+        pos_history = [pos.copy()]
+        vel_history = [vel.copy()]
         
         t = 0.0
         while t < sim_time:
@@ -72,22 +52,16 @@ def simulate_outer_points(
             target_dir = np.array([np.cos(theta), np.sin(theta)])
             
             if speed < 1e-3:
-                # If stationary, start moving directly in target direction
                 current_dir = target_dir.copy()
             else:
                 current_dir = vel / speed
             
-            # Determine optimal target speed for this direction
-            # Project current velocity onto target direction to see if we're moving
-            # with or against it
+            # Project current velocity onto target direction
             vel_projection = np.dot(vel, target_dir)
             
             if vel_projection > 0:
-                # Moving somewhat in target direction - aim for max_speed
                 target_speed = max_speed
             else:
-                # Moving opposite to target direction - we need to decelerate and reverse
-                # The target speed is still max_speed, but in the target direction
                 target_speed = max_speed
             
             # Calculate angular difference for turning
@@ -117,12 +91,9 @@ def simulate_outer_points(
                                     s*current_dir[0] + c*current_dir[1]])
             
             # Determine acceleration needed
-            # We want to achieve target_speed in the target_dir direction
-            # Current speed in target direction:
             current_speed_in_target_dir = np.dot(vel, target_dir)
             speed_diff = target_speed - current_speed_in_target_dir
             
-            # Maximum speed change this timestep
             max_dv = max_acc * dt_sim
             
             if abs(speed_diff) > max_dv:
@@ -130,8 +101,7 @@ def simulate_outer_points(
             else:
                 delta_speed = speed_diff
             
-            # Apply acceleration in the turning-adjusted direction
-            # but bias toward target direction for more efficient movement
+            # Apply acceleration
             accel_dir = 0.7 * target_dir + 0.3 * new_dir
             accel_dir = accel_dir / (np.linalg.norm(accel_dir) + 1e-6)
             
@@ -147,18 +117,30 @@ def simulate_outer_points(
             pos = pos + vel * dt_sim
             t += dt_sim
             
+            # Store history
+            pos_history.append(pos.copy())
+            vel_history.append(vel.copy())
+            
             # Early stop if we're aligned and at target speed
             if (abs(ang_diff) < 0.05 and 
                 abs(target_speed - np.dot(vel, target_dir)) < 0.1):
                 remaining = sim_time - t
                 if remaining > 0:
                     pos = pos + vel * remaining
+                    pos_history.append(pos.copy())
+                    vel_history.append(vel.copy())
                 break
         
         outer_points.append(pos.copy())
         final_vels.append(vel.copy())
+        all_positions.append(np.array(pos_history))
+        all_velocities.append(np.array(vel_history))
     
-    return np.array(outer_points), np.array(final_vels), angles
+    return (
+        np.array(outer_points), 
+        np.array(final_vels), 
+        angles
+    )
 
 def fill_polygon_with_grid(outer_pts, spacing=0.5):
     """
