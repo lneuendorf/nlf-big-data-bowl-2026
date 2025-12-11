@@ -167,7 +167,7 @@ for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for EPA model"):
         'zone_coverage': play_tracking['zone_coverage'].iloc[0],
         'down': play['down'],
         'ball_land_yards_to_first_down': max(play['yards_to_go'] - ball_row['x'], 0),
-        'ball_land_yards_to_endzone': min(110 - (play['absolute_yardline_number'] + ball_row['x']), 0),
+        'ball_land_yards_to_endzone': max(110 - (play['absolute_yardline_number'] + ball_row['x']), 0),
         'pass_distance': play['pass_distance']
     }
     target_epa = play['expected_points_added']

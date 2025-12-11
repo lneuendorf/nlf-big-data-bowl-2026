@@ -1,6 +1,7 @@
 """
 Filter:
-- drop "throw away" plays where ball badely misses targeted receiver? These add noise to epa prediction, as if it was a throw away the defense always "wins"
+- drop "throw away" plays where ball badely misses targeted receiver? These add noise to 
+  epa prediction, as if it was a throw away the defense always "wins"
 - focus specifically on free safety starting at least 8 yards downfield
 - pass must be at least x yards in air (safety needs time to react)
 
@@ -17,16 +18,17 @@ warnings.filterwarnings("ignore")
 import pandas as pd
 import numpy as np
 import torch
+from torch_geometric.data import Batch
 
 from preprocess import preprocess
 from models.defender_reach.preprocessor import DefenderReachDataset
 from models.defender_reach.model import DefenderReachModel
 from models.epa.graph_dataset import EPAGraphDataset
-from models.epa.epa_gnn_model import train_model
 from models.safety_reachable_points.safety_reach import (
     simulate_outer_points,
     fill_polygon_with_grid
 )
+from models.epa.epa_gnn_model import EPAGNN
 
 LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -35,6 +37,8 @@ RANDOM_SEED = 2
 np.random.seed(RANDOM_SEED)
 torch.manual_seed(RANDOM_SEED)
 N_WEEKS = 18
+SAVE_CSV_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/results'
+
 
 # Was getting segfaults without these settings
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -89,12 +93,6 @@ for gpid in tqdm(gpids_with_over_4_defenders, desc="Filtering plays with over 4 
         defender_df.drop(index=min_proba_idx, inplace=True)
         df = defender_df.query('gpid==@gpid').copy()
 
-# Drop plays with no defenders within 10 yards of the pass landing point
-gpids_with_no_defenders = set(plays['gpid'].unique()) - set(defender_df['gpid'].unique())
-if gpids_with_no_defenders:
-    LOG.info(f"Dropping {len(gpids_with_no_defenders)} plays with no defenders within 10 yards of the pass landing point")
-    defender_df = defender_df[~defender_df['gpid'].isin(gpids_with_no_defenders)].copy()
-
 # Drop play if "S","FS","SS" not in defender positions
 valid_positions = {'S', 'FS', 'SS'}
 gpids_to_drop = []
@@ -114,7 +112,7 @@ qb_outside_pocket = (
     tracking
     .query('pass_thrown and player_role=="Passer"')
     .sort_values('frame_id')
-    .drop_duplicates(subset=['gpid'])
+    .drop_duplicates(subset=['gpid'], keep='first')
     .rename(columns={'y':'qb_y_at_throw'})
     .merge(
         tracking.query('position=="Ball" and frame_id==1').rename(columns={'y':'ball_y_at_snap'})[['gpid','ball_y_at_snap']],
@@ -234,7 +232,6 @@ safety_starting_coords = (
 
 
 ##############  iii. Generate reachable points for each safety ##############
-##############  iii. Generate reachable points for each safety ##############
 def generate_safety_reachable_points(safety_df, grid_spacing=0.5, simulation_params={}):
     """
     Generate grid of reachable points for each safety.
@@ -296,13 +293,10 @@ def generate_safety_reachable_points(safety_df, grid_spacing=0.5, simulation_par
             'safety_sim_y': outer_points[:, 1],
             'safety_sim_dir': boundary_dirs_deg,  # Direction from start to point (degrees)
             'safety_sim_s': boundary_speeds,      # Speed at point (yd/s)
-            'angle_rad': angles,                   # Target angle in simulation
-            'final_vel_x': final_vels[:, 0],       # Final velocity x-component
-            'final_vel_y': final_vels[:, 1],       # Final velocity y-component
-            'safety_start_x': row['safety_start_x'],
-            'safety_start_y': row['safety_start_y'],
-            'safety_start_dir': row['safety_start_dir'],
-            'safety_start_s': row['safety_start_s']
+            'start_x': row['safety_start_x'],
+            'start_y': row['safety_start_y'],
+            'start_dir': row['safety_start_dir'],
+            'start_s': row['safety_start_s']
         })
         
         # Create DataFrame for interior points
@@ -338,13 +332,10 @@ def generate_safety_reachable_points(safety_df, grid_spacing=0.5, simulation_par
                 'safety_sim_y': interior_points[:, 1],
                 'safety_sim_dir': interior_dirs_deg,  # Direction from start to point
                 'safety_sim_s': interior_speeds,      # Estimated speed at point
-                'angle_rad': np.nan,
-                'final_vel_x': np.nan,                # Not available for interior points
-                'final_vel_y': np.nan,
-                'safety_start_x': row['safety_start_x'],
-                'safety_start_y': row['safety_start_y'],
-                'safety_start_dir': row['safety_start_dir'],
-                'safety_start_s': row['safety_start_s']
+                'start_x': row['safety_start_x'],
+                'start_y': row['safety_start_y'],
+                'start_dir': row['safety_start_dir'],
+                'start_s': row['safety_start_s']
             })
         else:
             interior_df = pd.DataFrame()
@@ -359,9 +350,8 @@ def generate_safety_reachable_points(safety_df, grid_spacing=0.5, simulation_par
     else:
         all_points_df = pd.DataFrame(columns=[
             'gpid', 'nfl_id', 'point_type', 'safety_sim_x', 'safety_sim_y',
-            'safety_sim_dir', 'safety_sim_s', 'angle_rad',
-            'final_vel_x', 'final_vel_y',
-            'safety_start_x', 'safety_start_y', 'safety_start_dir', 'safety_start_s'
+            'safety_sim_dir', 'safety_sim_s',
+            'start_x', 'start_y', 'start_dir', 'start_s'
         ])
     
     return all_points_df
@@ -371,6 +361,11 @@ LOG.info("Generating reachable points for safeties")
 safety_reachable_points = generate_safety_reachable_points(
     safety_starting_coords,
     grid_spacing=0.5,
+).assign(
+    x=lambda x: x['safety_sim_x'],
+    y=lambda x: x['safety_sim_y'],
+    vx=lambda x: x['safety_sim_s'] * np.cos(np.deg2rad(x['safety_sim_dir'])),
+    vy=lambda x: x['safety_sim_s'] * np.sin(np.deg2rad(x['safety_sim_dir']))
 )
 
 LOG.info(f"Generated {len(safety_reachable_points)} reachable points")
@@ -415,41 +410,74 @@ df = (
       )
       [['gpid', 'frame_id', 'nfl_id', 'player_role', 'position', 'x', 'y', 's', 'dir',
         'ball_land_x','ball_land_y','zone_coverage','within_10_yards_proba']]
+      .merge(
+          plays[['gpid', 'yards_to_go', 'down', 'absolute_yardline_number', 'pass_distance']],
+          on='gpid',
+          how='left'
+      )
+      .sort_values(['gpid','player_role','within_10_yards_proba'], ascending=[True, True, False])
+      .assign(
+          vx=lambda x: x['s'] * np.cos(np.deg2rad(x['dir'])),
+          vy=lambda x: x['s'] * np.sin(np.deg2rad(x['dir'])),
+          ball_land_yards_to_first_down=lambda x: np.maximum(x['yards_to_go'] - x['ball_land_x'], 0),
+          ball_land_yards_to_endzone=lambda x: np.maximum(110 - (x['absolute_yardline_number'] + x['ball_land_x']), 0)
+      )
 )
 
-LOG.info(f"Final number of pass plays: {defender_df['gpid'].nunique()}")
+##############  iv. Generate the Graphs ###############
+samples = []
+meta_data = []
+# For each play and each free safety, create samples for original and simulated points
+for gpid, group in tqdm(df.groupby('gpid'), desc="Generating graphs for plays"):
+    safety_nfl_ids = free_safties.query('gpid==@gpid').nfl_id.unique().tolist()
+    defenders = group.query('player_role=="Defensive Coverage"').reset_index(drop=True)
+    defender_map = {row['nfl_id']: idx for idx, row in defenders.iterrows()}
+    defenders_list = defenders[['x','y','vx','vy']].to_dict(orient='records')
+    base_sample = {
+        'receiver': group.query('player_role=="Targeted Receiver"')[['x','y','vx','vy']].iloc[0].to_dict(),
+        'ball': group.query('position=="Ball"')[['x','y']].iloc[0].to_dict(),
+        'defenders': defenders_list,
+        'global_features': group[['zone_coverage','down','ball_land_yards_to_first_down',
+                                 'ball_land_yards_to_endzone','pass_distance']].iloc[0].to_dict(),
+    }
 
-# Join the actual safety positions to the reachable points dataframe
-df = pd.concat([
-    df.merge(
-        free_safties.rename(columns={'nfl_id':'safety_nfl_id'}),
-        on=['gpid'],
-        how='left'
-    )
-    .assign(
-        sample_type='actual',
-    ),
-    df.merge(
-        safety_reachable_points
-            [['gpid','nfl_id','safety_sim_x','safety_sim_y','safety_sim_dir','safety_sim_s']]
-            .assign(sample_type='simulated')
-            .rename(columns={'nfl_id':'safety_nfl_id'}),
-        on=['gpid'],
-        how='left'
-    )
-    .assign(
-        x=lambda x: np.where(x.nfl_id == x.safety_nfl_id, x.safety_sim_x, x.x),
-        y=lambda x: np.where(x.nfl_id == x.safety_nfl_id, x.safety_sim_y, x.y),
-        s=lambda x: np.where(x.nfl_id == x.safety_nfl_id, x.safety_sim_s, x.s),
-        dir=lambda x: np.where(x.nfl_id == x.safety_nfl_id, x.safety_sim_dir, x.dir)
-    )
-    .drop(columns=['safety_sim_x','safety_sim_y','safety_sim_dir','safety_sim_s'])
-], ignore_index=True
-).assign(key=lambda x: x.groupby(['gpid','safety_nfl_id','sample_type']).ngroup())
+    for safety_nfl_id in safety_nfl_ids:
+        safety_points = safety_reachable_points.query('gpid==@gpid and nfl_id==@safety_nfl_id').copy()
+        start_points = safety_points[['start_x','start_y','start_dir','start_s']].iloc[0].to_dict()
 
-##############  iv. EPA Model Prediction ###############
+        # Original sample with actual safety position
+        samples.append(base_sample.copy())  # Need to copy here too
+        meta_data.append({
+            'gpid': gpid,
+            'safety_nfl_id': safety_nfl_id,
+            'sample_type': 'original',
+            **group.query('nfl_id==@safety_nfl_id')[['x','y','vx','vy']].iloc[0].to_dict(),
+            **start_points
+        })
+
+        # Simulated samples for each reachable point
+        for _, point_row in safety_points.iterrows():
+            modified_sample = {
+                'receiver': base_sample['receiver'].copy(),
+                'ball': base_sample['ball'].copy(),
+                'defenders': [d.copy() for d in base_sample['defenders']],  # Deep copy the list of dicts
+                'global_features': base_sample['global_features'].copy()
+            }
+            modified_sample['defenders'][defender_map[safety_nfl_id]] = point_row[['x','y','vx','vy']].to_dict()
+            samples.append(modified_sample)
+            meta_data.append({
+                'gpid': gpid,
+                'safety_nfl_id': safety_nfl_id, 
+                'sample_type': 'simulated',
+                **point_row[['x','y','vx','vy']].to_dict(),
+                **start_points
+            })
+LOG.info(f"Total number of samples (original + simulated): {len(samples)}")
+
+graph_dataset = EPAGraphDataset(samples)
+
+##############  v. Batch Predict EPA ###############
 EPA_MODEL_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/models/epa_gnn_model.pth'
-from models.epa.epa_gnn_model import EPAGNN
 epa_model = EPAGNN(
     node_feat_dim=4,
     node_type_count=3,
@@ -463,71 +491,21 @@ if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
 else:
     epa_model.load_state_dict(checkpoint)
 epa_model.eval()
-epa_preds = pd.DataFrame(columns=['gpid','safety_nfl_id','pred_epa'])
-for gpid, safety_nfl_id, sample_type, key in tqdm(df[['gpid', 'safety_nfl_id', 'sample_type', 'key']].drop_duplicates().itertuples(index=False), desc="Preparing samples for EPA model", total=df[['gpid', 'safety_nfl_id', 'sample_type', 'key']].drop_duplicates().shape[0]):
-    play_tracking = df.query('gpid==@gpid and key==@key and sample_type==@sample_type').copy()
-    play = plays.query('gpid==@gpid').iloc[0]
-    assert play_tracking['frame_id'].nunique() == 1, f"More than one frame_id for gpid {gpid}"
-    receiver_row = play_tracking.query('player_role=="Targeted Receiver"').iloc[0]
-    ball_row = play_tracking.query('position=="Ball"').iloc[0]
-    defender_rows = (
-        play_tracking
-          .query('player_role=="Defensive Coverage"')
-          .sort_values('within_10_yards_proba', ascending=False).copy()
-    )
-
-    receiver = {
-        'x': receiver_row['x'],
-        'y': receiver_row['y'],
-        'vx': receiver_row['s'] * np.cos(np.deg2rad(receiver_row['dir'])),
-        'vy': receiver_row['s'] * np.sin(np.deg2rad(receiver_row['dir']))
-    }
-    ball = {
-        'x': ball_row['x'],
-        'y': ball_row['y'],
-    }
-    defenders = []
-    for _, row in defender_rows.iterrows():
-        defenders.append({
-            'x': row['x'],
-            'y': row['y'],
-            'vx': row['s'] * np.cos(np.deg2rad(row['dir'])),
-            'vy': row['s'] * np.sin(np.deg2rad(row['dir']))
-        })
-    if len(defenders) < 1:
-        raise ValueError(f"No defenders for gpid {gpid}")
-    global_features = {
-        'zone_coverage': play_tracking['zone_coverage'].iloc[0],
-        'down': play['down'],
-        'ball_land_yards_to_first_down': max(play['yards_to_go'] - ball_row['x'], 0),
-        'ball_land_yards_to_endzone': min(110 - (play['absolute_yardline_number'] + ball_row['x']), 0),
-        'pass_distance': play['pass_distance']
-    }
-    target_epa = play['expected_points_added']
-
-    sample = {
-        'receiver': receiver,
-        'ball': ball,
-        'defenders': defenders,
-        'global_features': global_features,
-        'target_epa': target_epa
-    }
-
-    dataset = EPAGraphDataset([sample])
-    graph = dataset[0]
+BATCH_SIZE = 64
+all_epa_predictions = []
+for i in tqdm(range(0, graph_dataset.len(), BATCH_SIZE), desc="Predicting EPA for samples"):
+    batch_samples = [graph_dataset.get(j) for j in range(i, min(i + BATCH_SIZE, graph_dataset.len()))]
+    batch = Batch.from_data_list(batch_samples)
     with torch.no_grad():
-        pred_epa = epa_model(graph.x, graph.edge_index, graph.global_features.unsqueeze(0))
-    epa_preds = pd.concat([
-        epa_preds,
-        pd.DataFrame({
-            'gpid': [gpid],
-            'safety_nfl_id': [safety_nfl_id],
-            'sample_type': [sample_type],
-            'key': [key],
-            'pred_epa': pred_epa.squeeze().item()
-        })
-    ], ignore_index=True)
+        epa_preds = epa_model(batch)
+    if epa_preds.dim() == 0:
+        all_epa_predictions.append(epa_preds.item())
+    else:
+        all_epa_predictions.extend(epa_preds.cpu().numpy().tolist())
 
-breakpoint()
-print(1)
-##############  v. Save results ###############
+##############  vi. Save Results ###############
+results_df = pd.DataFrame(meta_data)
+results_df['predicted_epa'] = all_epa_predictions
+
+os.makedirs(SAVE_CSV_PATH, exist_ok=True)
+results_df.to_csv(os.path.join(SAVE_CSV_PATH, 'epa_preds.csv'), index=False)

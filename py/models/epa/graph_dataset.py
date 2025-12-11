@@ -10,7 +10,7 @@ class EPAGraphDataset(Dataset):
         - ball: dict with {x, y} (velocity optional)
         - defenders: list of dicts (variable size)
         - global_features: dict or tensor
-        - target_epa: float
+        - target_epa: float, None at inference time
 
     Preprocessing outside loader ensures consistent direction normalization.
     """
@@ -32,7 +32,6 @@ class EPAGraphDataset(Dataset):
         ball = s["ball"]
         defenders = s["defenders"]  # list of dicts
         global_feats = s["global_features"]  # tensor-like
-        target_epa = s["target_epa"]
 
         # -----------------------------
         # 1. Assemble nodes
@@ -107,7 +106,10 @@ class EPAGraphDataset(Dataset):
         # -----------------------------
         # 5. Create Graph Data object
         # -----------------------------
-        y = torch.tensor([target_epa], dtype=torch.float)
+        if "target_epa" in s and s["target_epa"] is not None:
+            y = torch.tensor([s["target_epa"]], dtype=torch.float)
+        else:
+            y = None # at inference time
 
         g = Data(
             x=node_feats,
