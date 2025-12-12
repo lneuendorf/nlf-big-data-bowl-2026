@@ -39,7 +39,6 @@ torch.manual_seed(RANDOM_SEED)
 N_WEEKS = 18
 SAVE_CSV_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/results'
 
-
 # Was getting segfaults without these settings
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -53,7 +52,6 @@ for week in tqdm(range(1, N_WEEKS+1), desc="Loading weekly data"):
 LOG.info(f'Tracking input shape: {tracking_input.shape}, output shape: {tracking_output.shape}')
 
 games, plays, players, tracking = preprocess.process_data(tracking_input, tracking_output, sup_data)
-plays['yards_to_goal'] = 110 - plays['absolute_yardline_number']
 team_desc = preprocess.fetch_team_desc()
 
 ##############  ii. Predict if defender is a part of the pass play ##############
@@ -381,7 +379,8 @@ df = (
       .assign(gpid_nflid=lambda x: x['gpid'] + '_' + x['nfl_id'].astype(str))
       .query('gpid_nflid in @defender_gpid_nflids or position=="Ball" or player_role=="Targeted Receiver"')
       .merge(
-          plays[['gpid','absolute_yardline_number','ball_land_x','ball_land_y','team_coverage_man_zone']],
+          plays[['gpid','absolute_yardline_number','ball_land_x','ball_land_y','team_coverage_man_zone',
+                 'route_of_targeted_receiver']],
           on='gpid',
           how='left'
       )
@@ -389,7 +388,28 @@ df = (
       .assign(
           x=lambda x: x['x'] - x['absolute_yardline_number'],
           ball_land_x=lambda x: x['ball_land_x'] - x['absolute_yardline_number'],
-          zone_coverage=lambda x: np.where(x['team_coverage_man_zone'] == "ZONE_COVERAGE", 1, 0)
+          zone_coverage=lambda x: np.where(x['team_coverage_man_zone'] == "ZONE_COVERAGE", 1, 0),
+          route_type=lambda x: np.select(
+                [
+                    x['route_of_targeted_receiver'].isin(['GO', 'POST', 'CORNER', 'WHEEL']),
+                    x['route_of_targeted_receiver'].isin(['IN', 'SLANT', 'CROSS', 'ANGLE']),
+                    x['route_of_targeted_receiver'].isin(['OUT']),
+                    x['route_of_targeted_receiver'].isin(['HITCH', 'FLAT', 'SCREEN'])
+                ],
+                [
+                    'VERTICAL',
+                    'INSIDE_BREAK',
+                    'OUTSIDE_BREAK',
+                    'UNDERNEATH_SHORT'
+                ],
+                default='OTHER'
+            )
+      )
+      .assign(
+        route_vertical=lambda x: np.where(x['route_type']=='VERTICAL', 1, 0),
+        route_inside_break=lambda x: np.where(x['route_type']=='INSIDE_BREAK', 1, 0),
+        route_outside_break=lambda x: np.where(x['route_type']=='OUTSIDE_BREAK', 1, 0),
+        route_underneath_short=lambda x: np.where(x['route_type']=='UNDERNEATH_SHORT', 1, 0)
       )
       # Only keep last frame of play when ball lands
       .merge(
@@ -409,7 +429,8 @@ df = (
           how='left'
       )
       [['gpid', 'frame_id', 'nfl_id', 'player_role', 'position', 'x', 'y', 's', 'dir',
-        'ball_land_x','ball_land_y','zone_coverage','within_10_yards_proba']]
+        'ball_land_x','ball_land_y','zone_coverage','within_10_yards_proba',
+        'route_vertical','route_inside_break','route_outside_break','route_underneath_short']]
       .merge(
           plays[['gpid', 'yards_to_go', 'down', 'absolute_yardline_number', 'pass_distance']],
           on='gpid',
@@ -428,17 +449,19 @@ df = (
 samples = []
 meta_data = []
 # For each play and each free safety, create samples for original and simulated points
-for gpid, group in tqdm(df.groupby('gpid'), desc="Generating graphs for plays"):
+for gpid, group in tqdm(df.groupby('gpid'), desc="Formatting samples for EPA prediction"):
     safety_nfl_ids = free_safties.query('gpid==@gpid').nfl_id.unique().tolist()
     defenders = group.query('player_role=="Defensive Coverage"').reset_index(drop=True)
     defender_map = {row['nfl_id']: idx for idx, row in defenders.iterrows()}
     defenders_list = defenders[['x','y','vx','vy']].to_dict(orient='records')
     base_sample = {
         'receiver': group.query('player_role=="Targeted Receiver"')[['x','y','vx','vy']].iloc[0].to_dict(),
-        'ball': group.query('position=="Ball"')[['x','y']].iloc[0].to_dict(),
+        'ball': group.query('position=="Ball"')[['x','y','vx','vy']].iloc[0].to_dict(),
         'defenders': defenders_list,
         'global_features': group[['zone_coverage','down','ball_land_yards_to_first_down',
-                                 'ball_land_yards_to_endzone','pass_distance']].iloc[0].to_dict(),
+                                 'ball_land_yards_to_endzone','pass_distance',
+                                 'route_vertical','route_inside_break','route_outside_break','route_underneath_short']].iloc[0].to_dict(),
+        'target_epa': None  # Placeholder, as we are predicting EPA
     }
 
     for safety_nfl_id in safety_nfl_ids:
@@ -446,7 +469,13 @@ for gpid, group in tqdm(df.groupby('gpid'), desc="Generating graphs for plays"):
         start_points = safety_points[['start_x','start_y','start_dir','start_s']].iloc[0].to_dict()
 
         # Original sample with actual safety position
-        samples.append(base_sample.copy())  # Need to copy here too
+        samples.append({
+            'receiver': base_sample['receiver'].copy(),
+            'ball': base_sample['ball'].copy(),
+            'defenders': [d.copy() for d in base_sample['defenders']],
+            'global_features': base_sample['global_features'].copy(),
+            'target_epa': None
+        })
         meta_data.append({
             'gpid': gpid,
             'safety_nfl_id': safety_nfl_id,
@@ -479,11 +508,11 @@ graph_dataset = EPAGraphDataset(samples)
 ##############  v. Batch Predict EPA ###############
 EPA_MODEL_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/models/epa_gnn_model.pth'
 epa_model = EPAGNN(
-    node_feat_dim=4,
+    node_feat_dim=6,
     node_type_count=3,
-    edge_feat_dim=4,
-    global_dim=5,
-    hidden=128
+    edge_feat_dim=11,
+    global_dim=9,
+    hidden=64,
 )
 checkpoint = torch.load(EPA_MODEL_PATH, map_location=torch.device('cpu'))
 if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
@@ -497,11 +526,11 @@ for i in tqdm(range(0, graph_dataset.len(), BATCH_SIZE), desc="Predicting EPA fo
     batch_samples = [graph_dataset.get(j) for j in range(i, min(i + BATCH_SIZE, graph_dataset.len()))]
     batch = Batch.from_data_list(batch_samples)
     with torch.no_grad():
-        epa_preds = epa_model(batch)
+        epa_preds = epa_model(batch).squeeze()
     if epa_preds.dim() == 0:
         all_epa_predictions.append(epa_preds.item())
     else:
-        all_epa_predictions.extend(epa_preds.cpu().numpy().tolist())
+        all_epa_predictions.extend(epa_preds.cpu().numpy().flatten().tolist())
 
 ##############  vi. Save Results ###############
 results_df = pd.DataFrame(meta_data)
