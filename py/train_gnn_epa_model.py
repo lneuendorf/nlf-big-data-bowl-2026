@@ -245,6 +245,21 @@ LOG.info(f"{'Val':<10} {val_metrics['MAE']:10.4f} {val_metrics['SmoothL1']:12.4f
 LOG.info(f"{'Test':<10} {test_metrics['MAE']:10.4f} {test_metrics['SmoothL1']:12.4f} "
       f"{test_metrics['MSE']:12.4f} {test_metrics['RMSE']:12.4f}")
 
+# Baseline: Predict average EPA
+def smooth_l1(y_true, y_pred, delta=1.0):
+    diff = np.abs(y_true - y_pred)
+    loss = np.where(diff < delta, 0.5 * diff**2, delta * (diff - 0.5 * delta))
+    return np.mean(loss)
+avg_epa = plays.expected_points_added.mean()
+LOG.info("===== Baseline EPA Model Evaluation (Predicting Average EPA) =====")
+LOG.info(f"{'Split':<10} {'MAE':>10} {'SmoothL1':>12} {'MSE':>12} {'RMSE':>12}")
+LOG.info("-" * 60)
+LOG.info(f"{'All':<10} "
+      f"{np.mean(np.abs(plays.expected_points_added - avg_epa)):10.4f} "
+      f"{smooth_l1(plays.expected_points_added, avg_epa):12.4f} "
+      f"{np.mean((plays.expected_points_added - avg_epa)**2):12.4f} "
+      f"{np.sqrt(np.mean((plays.expected_points_added - avg_epa)**2)):12.4f}")
+
 LOG.info("Model training and evaluation complete, saving the model")
 SAVE_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/models/epa_gnn_model.pth'
 torch.save(model.state_dict(), SAVE_PATH)
