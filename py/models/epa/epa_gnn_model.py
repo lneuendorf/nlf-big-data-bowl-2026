@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import NNConv, global_mean_pool
+from torch_geometric.nn import global_mean_pool, GATv2Conv
 from torch_geometric.loader import DataLoader
 from torch.optim import AdamW
 import copy
@@ -12,41 +12,31 @@ LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class EPAGNN(nn.Module):
-    def __init__(self, node_feat_dim=4, node_type_count=3,
-                 edge_feat_dim=4, global_dim=4,
-                 hidden=128):
+    def __init__(self, node_feat_dim=6, node_type_count=3,
+                 edge_feat_dim=11, global_dim=10,
+                 hidden=64):
         super().__init__()
 
-        # Node type embedding
-        self.type_emb = nn.Embedding(node_type_count, 8)
+        self.type_emb = nn.Embedding(node_type_count, 4)
 
-        # Initial node encoder
         self.node_encoder = nn.Sequential(
-            nn.Linear(node_feat_dim + 8, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, hidden)
-        )
-
-        # Edge MLP for NNConv (produces weight matrix for message)
-        self.edge_nn = nn.Sequential(
-            nn.Linear(edge_feat_dim, hidden * hidden),
+            nn.Linear(node_feat_dim + 4, hidden),
             nn.ReLU()
         )
 
-        # Message passing
-        self.conv1 = NNConv(hidden, hidden, self.edge_nn, aggr='mean')
-        self.conv2 = NNConv(hidden, hidden, self.edge_nn, aggr='mean')
+        # Attention-based convolution
+        self.conv1 = GATv2Conv(hidden, hidden, heads=4, concat=False, 
+                               edge_dim=edge_feat_dim)
 
-        # Global feature projection
         self.global_proj = nn.Sequential(
             nn.Linear(global_dim, hidden),
             nn.ReLU()
         )
 
-        # Readout MLP
         self.head = nn.Sequential(
             nn.Linear(hidden * 2, hidden),
             nn.ReLU(),
+            nn.Dropout(0.2),
             nn.Linear(hidden, 1)
         )
 
@@ -59,27 +49,16 @@ class EPAGNN(nn.Module):
         if g.dim() == 1:
             g = g.unsqueeze(0)
 
-        # Attach type embedding
         type_embed = self.type_emb(t)
         x = torch.cat([x, type_embed], dim=1)
 
-        # Encode nodes
         h = self.node_encoder(x)
-
-        # Message passing
         h = F.relu(self.conv1(h, edge_index, edge_attr))
-        h = F.relu(self.conv2(h, edge_index, edge_attr))
 
-        # Pool node embeddings -> graph
         pooled = global_mean_pool(h, data.batch)
-
-        # Process global features
         gproj = self.global_proj(g)
 
-        # Combine
         combined = torch.cat([pooled, gproj], dim=1)
-
-        # Predict EPA
         out = self.head(combined)
         return out.squeeze(1)
 
@@ -98,12 +77,12 @@ def train_model(
     if val_dataset is not None:
         val_loader = DataLoader(val_dataset, batch_size=batch_size)
 
-    model = EPAGNN(
-        node_feat_dim=4,
+        model = EPAGNN(
+        node_feat_dim=train_dataset[0].x.shape[1],
         node_type_count=3,
-        edge_feat_dim=4,
+        edge_feat_dim=train_dataset[0].edge_attr.shape[1],
         global_dim=train_dataset[0].global_feats.shape[-1],
-        hidden=128
+        hidden=64
     )
 
     optimizer = AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
