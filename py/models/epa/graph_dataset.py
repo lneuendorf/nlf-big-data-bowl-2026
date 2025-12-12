@@ -88,8 +88,8 @@ class EPAGraphDataset(Dataset):
         # -----------------------------
         edge_feats = []
         for i, j in zip(src, dst):
-            xi, yi, vxi, vyi = node_feats[i]
-            xj, yj, vxj, vyj = node_feats[j]
+            xi, yi, vxi, vyi, speed_i, dist_ball_i = node_feats[i]
+            xj, yj, vxj, vyj, speed_j, dist_ball_j = node_feats[j]
 
             dx = xj - xi
             dy = yj - yi
