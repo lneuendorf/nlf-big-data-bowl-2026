@@ -17,15 +17,13 @@ def simulate_outer_points(
     with physical constraints over a fixed time horizon.
     
     Returns:
-        tuple: (outer_points, final_vels, angles, all_positions, all_velocities)
+        tuple: (outer_points, final_vels, angles)
             outer_points (ndarray): Shape (n_bins, 2). Maximum reachable positions
                                    in yards for each angular direction after sim_time.
             final_vels (ndarray): Shape (n_bins, 2). Final velocity vectors in yd/s
                                  at each outer point.
             angles (ndarray): Shape (n_bins,). Target angles in radians corresponding
                              to each angular bin (0 to 2π).
-            all_positions (list): List of arrays with position history for each angle
-            all_velocities (list): List of arrays with velocity history for each angle
     """
     init_pos = np.array(init_pos, dtype=float)
     init_vel = np.array(init_vel, dtype=float)
@@ -59,10 +57,7 @@ def simulate_outer_points(
             # Project current velocity onto target direction
             vel_projection = np.dot(vel, target_dir)
             
-            if vel_projection > 0:
-                target_speed = max_speed
-            else:
-                target_speed = max_speed
+            target_speed = max_speed
             
             # Calculate angular difference for turning
             cross = current_dir[0]*target_dir[1] - current_dir[1]*target_dir[0]
@@ -73,7 +68,8 @@ def simulate_outer_points(
             if speed < 0.5:
                 max_omega = max_turn_rate * slow_turn_multiplier
             else:
-                max_omega = max_turn_rate / (1.0 + 0.2*speed)
+                speed_factor = max(speed, 0.5)
+                max_omega = max_turn_rate / (1.0 + 0.2*speed_factor)
                 max_omega = max(0.5, max_omega)
             
             # Apply turning within limits
@@ -103,7 +99,11 @@ def simulate_outer_points(
             
             # Apply acceleration
             accel_dir = 0.7 * target_dir + 0.3 * new_dir
-            accel_dir = accel_dir / (np.linalg.norm(accel_dir) + 1e-6)
+            accel_norm = np.linalg.norm(accel_dir)
+            if accel_norm < 1e-6:
+                accel_dir = target_dir
+            else:
+                accel_dir = accel_dir / accel_norm
             
             # Update velocity
             vel = vel + accel_dir * delta_speed
