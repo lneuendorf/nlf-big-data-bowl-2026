@@ -36,7 +36,6 @@ for week in tqdm(range(1, N_WEEKS+1), desc="Loading weekly data"):
 LOG.info(f'Tracking input shape: {tracking_input.shape}, output shape: {tracking_output.shape}')
 
 games, plays, players, tracking = preprocess.process_data(tracking_input, tracking_output, sup_data)
-plays['yards_to_goal'] = 110 - plays['absolute_yardline_number']
 team_desc = preprocess.fetch_team_desc()
 
 ##############  ii. Predict if defender is a part of the pass play ##############
@@ -91,7 +90,7 @@ df = (
       .assign(gpid_nflid=lambda x: x['gpid'] + '_' + x['nfl_id'].astype(str))
       .query('gpid_nflid in @defender_gpid_nflids or position=="Ball" or player_role=="Targeted Receiver"')
       .merge(
-          plays[['gpid','absolute_yardline_number','ball_land_x','ball_land_y','team_coverage_man_zone']],
+          plays[['gpid','absolute_yardline_number','ball_land_x','ball_land_y','team_coverage_man_zone','route_of_targeted_receiver']],
           on='gpid',
           how='left'
       )
@@ -99,7 +98,28 @@ df = (
       .assign(
           x=lambda x: x['x'] - x['absolute_yardline_number'],
           ball_land_x=lambda x: x['ball_land_x'] - x['absolute_yardline_number'],
-          zone_coverage=lambda x: np.where(x['team_coverage_man_zone'] == "ZONE_COVERAGE", 1, 0)
+          zone_coverage=lambda x: np.where(x['team_coverage_man_zone'] == "ZONE_COVERAGE", 1, 0),
+          route_type=lambda x: np.select(
+                [
+                    x['route_of_targeted_receiver'].isin(['GO', 'POST', 'CORNER', 'WHEEL']),
+                    x['route_of_targeted_receiver'].isin(['IN', 'SLANT', 'CROSS', 'ANGLE']),
+                    x['route_of_targeted_receiver'].isin(['OUT']),
+                    x['route_of_targeted_receiver'].isin(['HITCH', 'FLAT', 'SCREEN'])
+                ],
+                [
+                    'VERTICAL',
+                    'INSIDE_BREAK',
+                    'OUTSIDE_BREAK',
+                    'UNDERNEATH_SHORT'
+                ],
+                default='OTHER'
+            )
+      )
+      .assign(
+        route_vertical=lambda x: np.where(x['route_type']=='VERTICAL', 1, 0),
+        route_inside_break=lambda x: np.where(x['route_type']=='INSIDE_BREAK', 1, 0),
+        route_outside_break=lambda x: np.where(x['route_type']=='OUTSIDE_BREAK', 1, 0),
+        route_underneath_short=lambda x: np.where(x['route_type']=='UNDERNEATH_SHORT', 1, 0)
       )
       # Only keep last frame of play when ball lands
       .merge(
@@ -119,7 +139,8 @@ df = (
           how='left'
       )
       [['gpid', 'frame_id', 'nfl_id', 'player_role', 'position', 'x', 'y', 's', 'dir',
-        'ball_land_x','ball_land_y','zone_coverage','within_10_yards_proba']]
+        'ball_land_x','ball_land_y','zone_coverage','within_10_yards_proba',
+        'route_vertical','route_inside_break','route_outside_break','route_underneath_short']]
 )
 
 LOG.info(f"Final number of pass plays: {defender_df['gpid'].nunique()}")
@@ -152,6 +173,8 @@ for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for EPA model"):
     ball = {
         'x': ball_row['x'],
         'y': ball_row['y'],
+        'vx': ball_row['s'] * np.cos(np.deg2rad(ball_row['dir'])),
+        'vy': ball_row['s'] * np.sin(np.deg2rad(ball_row['dir']))
     }
     defenders = []
     for _, row in defender_rows.iterrows():
@@ -168,7 +191,11 @@ for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for EPA model"):
         'down': play['down'],
         'ball_land_yards_to_first_down': max(play['yards_to_go'] - ball_row['x'], 0),
         'ball_land_yards_to_endzone': max(110 - (play['absolute_yardline_number'] + ball_row['x']), 0),
-        'pass_distance': play['pass_distance']
+        'pass_distance': play['pass_distance'],
+        'route_vertical': receiver_row['route_vertical'],
+        'route_inside_break': receiver_row['route_inside_break'],
+        'route_outside_break': receiver_row['route_outside_break'],
+        'route_underneath_short': receiver_row['route_underneath_short']
     }
     target_epa = play['expected_points_added']
 
