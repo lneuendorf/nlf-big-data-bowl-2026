@@ -51,11 +51,8 @@ class EPAGraphDataset(Dataset):
         node_types.append(self.type_to_id["receiver"])
 
         # Ball node
-        # If no vx,vy -> set to 0
-        vx = ball.get("vx", 0.0)
-        vy = ball.get("vy", 0.0)
-        ball_speed = math.sqrt(vx**2 + vy**2)
-        node_feats.append([ball["x"], ball["y"], vx, vy, ball_speed, 0.0])  # ball distance to itself = 0
+        ball_speed = math.sqrt(ball['vx']**2 + ball['vy']**2)
+        node_feats.append([ball["x"], ball["y"], ball["vx"], ball["vy"], ball_speed, 0.0])  # ball distance to itself = 0
         node_types.append(self.type_to_id["ball"])
 
         # Defender nodes
