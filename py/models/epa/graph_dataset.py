@@ -40,9 +40,13 @@ class EPAGraphDataset(Dataset):
         node_types = []
 
         # Receiver node
+        rec_to_ball_dist = math.sqrt((receiver["x"] - ball["x"])**2 + (receiver["y"] - ball["y"])**2)
+        rec_speed = math.sqrt(receiver["vx"]**2 + receiver["vy"]**2)
         node_feats.append([
             receiver["x"], receiver["y"],
-            receiver["vx"], receiver["vy"]
+            receiver["vx"], receiver["vy"],
+            rec_speed,
+            rec_to_ball_dist
         ])
         node_types.append(self.type_to_id["receiver"])
 
@@ -50,12 +54,20 @@ class EPAGraphDataset(Dataset):
         # If no vx,vy -> set to 0
         vx = ball.get("vx", 0.0)
         vy = ball.get("vy", 0.0)
-        node_feats.append([ball["x"], ball["y"], vx, vy])
+        ball_speed = math.sqrt(vx**2 + vy**2)
+        node_feats.append([ball["x"], ball["y"], vx, vy, ball_speed, 0.0])  # ball distance to itself = 0
         node_types.append(self.type_to_id["ball"])
 
         # Defender nodes
         for d in defenders:
-            node_feats.append([d["x"], d["y"], d["vx"], d["vy"]])
+            def_to_ball_dist = math.sqrt((d["x"] - ball["x"])**2 + (d["y"] - ball["y"])**2)
+            def_speed = math.sqrt(d["vx"]**2 + d["vy"]**2)
+            node_feats.append([
+                d["x"], d["y"], 
+                d["vx"], d["vy"],
+                def_speed,
+                def_to_ball_dist
+            ])
             node_types.append(self.type_to_id["defender"])
 
         node_feats = torch.tensor(node_feats, dtype=torch.float)
@@ -90,8 +102,26 @@ class EPAGraphDataset(Dataset):
             rvx = vxj - vxi
             rvy = vyj - vyi
             rel_speed_proj = (rvx * dx + rvy * dy) / dist
-
-            edge_feats.append([dx, dy, dist, rel_speed_proj])
+            
+            # angular features
+            angle = math.atan2(dy, dx)  # angle of edge
+            vi_angle = math.atan2(vyi, vxi)  # node i velocity direction
+            vj_angle = math.atan2(vyj, vxj)  # node j velocity direction
+            angle_diff_i = angle - vi_angle  # is j in front of i's motion?
+            angle_diff_j = vj_angle - angle  # is j moving toward/away from i?
+            
+            # Interaction type encoding
+            type_i = node_types[i].item()
+            type_j = node_types[j].item()
+            
+            edge_feats.append([
+                dx, dy, dist, rel_speed_proj,
+                math.cos(angle_diff_i), math.sin(angle_diff_i),
+                math.cos(angle_diff_j), math.sin(angle_diff_j),
+                type_i == 0 and type_j == 2,  # receiver-to-defender
+                type_i == 2 and type_j == 0,  # defender-to-receiver
+                type_i == 1,  # ball involved
+            ])
 
         edge_attr = torch.tensor(edge_feats, dtype=torch.float)
 
