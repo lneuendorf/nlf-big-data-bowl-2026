@@ -36,7 +36,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 RANDOM_SEED = 2
 np.random.seed(RANDOM_SEED)
 torch.manual_seed(RANDOM_SEED)
-N_WEEKS = 18
+N_WEEKS = 1
 SAVE_CSV_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/results'
 
 # Was getting segfaults without these settings
@@ -518,7 +518,7 @@ graph_dataset = EPAGraphDataset(samples)
 ##############  v. Batch Predict EPA ###############
 EPA_MODEL_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/models/epa_gnn_model.pth'
 epa_model = EPAGNN(
-    node_feat_dim=8,
+    node_feat_dim=9,
     node_type_count=3,
     edge_feat_dim=11,
     global_dim=9,
