@@ -46,13 +46,15 @@ class EPAGraphDataset(Dataset):
         rec_speed = math.sqrt(receiver["vx"]**2 + receiver["vy"]**2)
         rec_to_endzone_dist = 110 - (absolute_yardline_number + receiver["x"])
         rec_endzone_rel_speed_proj = (-receiver["vx"] * rec_to_endzone_dist) / (abs(rec_to_endzone_dist) + 1e-6) if rec_to_endzone_dist != 0 else 0.0
+        in_endzone = 1.0 if rec_to_endzone_dist <= 0 else 0.0
         node_feats.append([
             receiver["x"], receiver["y"],
             receiver["vx"], receiver["vy"],
             rec_speed,
             rec_to_ball_dist,
             rec_to_endzone_dist,
-            rec_endzone_rel_speed_proj
+            rec_endzone_rel_speed_proj,
+            in_endzone
         ])
         node_types.append(self.type_to_id["receiver"])
 
@@ -60,7 +62,16 @@ class EPAGraphDataset(Dataset):
         ball_speed = math.sqrt(ball['vx']**2 + ball['vy']**2)
         ball_to_endzone_dist = 110 - (absolute_yardline_number + ball["x"])
         ball_endzone_rel_speed_proj = (ball_to_endzone_dist * -ball['vx']) / (abs(ball_to_endzone_dist) + 1e-6) if ball_to_endzone_dist != 0 else 0.0
-        node_feats.append([ball["x"], ball["y"], ball["vx"], ball["vy"], ball_speed, 0.0, ball_to_endzone_dist, ball_endzone_rel_speed_proj])
+        in_endzone = 1.0 if ball_to_endzone_dist <= 0 else 0.0
+        node_feats.append([
+            ball["x"], ball["y"], 
+            ball["vx"], ball["vy"], 
+            ball_speed, 
+            0.0, 
+            ball_to_endzone_dist, 
+            ball_endzone_rel_speed_proj,
+            in_endzone
+        ])
         node_types.append(self.type_to_id["ball"])
 
         # Defender nodes
@@ -69,13 +80,15 @@ class EPAGraphDataset(Dataset):
             def_speed = math.sqrt(d["vx"]**2 + d["vy"]**2)
             def_to_endzone_dist = 110 - (absolute_yardline_number + d["x"])
             def_endzone_rel_speed_proj = (def_to_endzone_dist * -d["vx"]) / (abs(def_to_endzone_dist) + 1e-6) if def_to_endzone_dist != 0 else 0.0
+            in_endzone = 1.0 if def_to_endzone_dist <= 0 else 0.0
             node_feats.append([
                 d["x"], d["y"], 
                 d["vx"], d["vy"],
                 def_speed,
                 def_to_ball_dist,
                 def_to_endzone_dist,
-                def_endzone_rel_speed_proj
+                def_endzone_rel_speed_proj,
+                in_endzone
             ])
             node_types.append(self.type_to_id["defender"])
 
@@ -101,8 +114,8 @@ class EPAGraphDataset(Dataset):
         edge_feats = []
         for i, j in zip(src, dst):
             # Convert node features to Python floats
-            xi, yi, vxi, vyi, _, _, _, _ = node_feats[i].tolist()
-            xj, yj, vxj, vyj, _, _, _, _ = node_feats[j].tolist()
+            xi, yi, vxi, vyi, _, _, _, _, _ = node_feats[i].tolist()
+            xj, yj, vxj, vyj, _, _, _, _, _ = node_feats[j].tolist()
 
             type_i = node_types[i].item()
             type_j = node_types[j].item()
