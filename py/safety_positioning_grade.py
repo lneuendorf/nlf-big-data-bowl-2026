@@ -364,6 +364,13 @@ safety_reachable_points = generate_safety_reachable_points(
     y=lambda x: x['safety_sim_y'],
     vx=lambda x: x['safety_sim_s'] * np.cos(np.deg2rad(x['safety_sim_dir'])),
     vy=lambda x: x['safety_sim_s'] * np.sin(np.deg2rad(x['safety_sim_dir']))
+).merge(
+    plays[['gpid','absolute_yardline_number']],
+    how="left",
+    on="gpid"
+).assign(
+    # Normalize the x value relative to the line-of-scrimmage
+    x=lambda x: x['absolute_yardline_number'] - x['x']
 )
 
 LOG.info(f"Generated {len(safety_reachable_points)} reachable points")
