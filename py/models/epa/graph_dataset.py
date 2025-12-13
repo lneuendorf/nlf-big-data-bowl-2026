@@ -6,6 +6,7 @@ import math
 class EPAGraphDataset(Dataset):
     """
     Each sample should provide:
+        - absolute_yardline_number: int
         - receiver: dict with {x, y, vx, vy}
         - ball: dict with {x, y} (velocity optional)
         - defenders: list of dicts (variable size)
@@ -28,6 +29,7 @@ class EPAGraphDataset(Dataset):
     def get(self, idx: int) -> Data:
         s = self.samples[idx]
 
+        absolute_yardline_number = s["absolute_yardline_number"]
         receiver = s["receiver"]
         ball = s["ball"]
         defenders = s["defenders"]  # list of dicts
@@ -42,28 +44,38 @@ class EPAGraphDataset(Dataset):
         # Receiver node
         rec_to_ball_dist = math.sqrt((receiver["x"] - ball["x"])**2 + (receiver["y"] - ball["y"])**2)
         rec_speed = math.sqrt(receiver["vx"]**2 + receiver["vy"]**2)
+        rec_to_endzone_dist = 110 - (absolute_yardline_number + receiver["x"])
+        rec_endzone_rel_speed_proj = (-receiver["vx"] * rec_to_endzone_dist) / (abs(rec_to_endzone_dist) + 1e-6) if rec_to_endzone_dist != 0 else 0.0
         node_feats.append([
             receiver["x"], receiver["y"],
             receiver["vx"], receiver["vy"],
             rec_speed,
-            rec_to_ball_dist
+            rec_to_ball_dist,
+            rec_to_endzone_dist,
+            rec_endzone_rel_speed_proj
         ])
         node_types.append(self.type_to_id["receiver"])
 
         # Ball node
         ball_speed = math.sqrt(ball['vx']**2 + ball['vy']**2)
-        node_feats.append([ball["x"], ball["y"], ball["vx"], ball["vy"], ball_speed, 0.0])  # ball distance to itself = 0
+        ball_to_endzone_dist = 110 - (absolute_yardline_number + ball["x"])
+        ball_endzone_rel_speed_proj = (ball_to_endzone_dist * -ball['vx']) / (abs(ball_to_endzone_dist) + 1e-6) if ball_to_endzone_dist != 0 else 0.0
+        node_feats.append([ball["x"], ball["y"], ball["vx"], ball["vy"], ball_speed, 0.0, ball_to_endzone_dist, ball_endzone_rel_speed_proj])
         node_types.append(self.type_to_id["ball"])
 
         # Defender nodes
         for d in defenders:
             def_to_ball_dist = math.sqrt((d["x"] - ball["x"])**2 + (d["y"] - ball["y"])**2)
             def_speed = math.sqrt(d["vx"]**2 + d["vy"]**2)
+            def_to_endzone_dist = 110 - (absolute_yardline_number + d["x"])
+            def_endzone_rel_speed_proj = (def_to_endzone_dist * -d["vx"]) / (abs(def_to_endzone_dist) + 1e-6) if def_to_endzone_dist != 0 else 0.0
             node_feats.append([
                 d["x"], d["y"], 
                 d["vx"], d["vy"],
                 def_speed,
-                def_to_ball_dist
+                def_to_ball_dist,
+                def_to_endzone_dist,
+                def_endzone_rel_speed_proj
             ])
             node_types.append(self.type_to_id["defender"])
 
@@ -88,36 +100,48 @@ class EPAGraphDataset(Dataset):
         # -----------------------------
         edge_feats = []
         for i, j in zip(src, dst):
-            xi, yi, vxi, vyi, speed_i, dist_ball_i = node_feats[i]
-            xj, yj, vxj, vyj, speed_j, dist_ball_j = node_feats[j]
+            # Convert node features to Python floats
+            xi, yi, vxi, vyi, _, _, _, _ = node_feats[i].tolist()
+            xj, yj, vxj, vyj, _, _, _, _ = node_feats[j].tolist()
+
+            type_i = node_types[i].item()
+            type_j = node_types[j].item()
 
             dx = xj - xi
             dy = yj - yi
-            dist = math.sqrt(dx*dx + dy*dy) + 1e-6
+            dist = math.sqrt(dx * dx + dy * dy) + 1e-6
 
-            # relative speed projected on direction i->j
             rvx = vxj - vxi
             rvy = vyj - vyi
             rel_speed_proj = (rvx * dx + rvy * dy) / dist
-            
-            # angular features
-            angle = math.atan2(dy, dx)  # angle of edge
-            vi_angle = math.atan2(vyi, vxi)  # node i velocity direction
-            vj_angle = math.atan2(vyj, vxj)  # node j velocity direction
-            angle_diff_i = angle - vi_angle  # is j in front of i's motion?
-            angle_diff_j = vj_angle - angle  # is j moving toward/away from i?
-            
-            # Interaction type encoding
-            type_i = node_types[i].item()
-            type_j = node_types[j].item()
-            
+
+            angle = math.atan2(dy, dx)
+            vi_angle = math.atan2(vyi, vxi)
+            vj_angle = math.atan2(vyj, vxj)
+
+            angle_diff_i = angle - vi_angle
+            angle_diff_j = vj_angle - angle
+
+            cos_angle_i = math.cos(angle_diff_i)
+            sin_angle_i = math.sin(angle_diff_i)
+            cos_angle_j = math.cos(angle_diff_j)
+            sin_angle_j = math.sin(angle_diff_j)
+
+            # -----------------------------
+            # Edge feature vector
+            # -----------------------------
             edge_feats.append([
-                dx, dy, dist, rel_speed_proj,
-                math.cos(angle_diff_i), math.sin(angle_diff_i),
-                math.cos(angle_diff_j), math.sin(angle_diff_j),
-                type_i == 0 and type_j == 2,  # receiver-to-defender
-                type_i == 2 and type_j == 0,  # defender-to-receiver
-                type_i == 1,  # ball involved
+                dx,
+                dy,
+                dist,
+                rel_speed_proj,
+                cos_angle_i,
+                sin_angle_i,
+                cos_angle_j,
+                sin_angle_j,
+                type_i == self.type_to_id["receiver"] and type_j == self.type_to_id["defender"],
+                type_i == self.type_to_id["defender"] and type_j == self.type_to_id["receiver"],
+                type_i == self.type_to_id["ball"],
             ])
 
         edge_attr = torch.tensor(edge_feats, dtype=torch.float)

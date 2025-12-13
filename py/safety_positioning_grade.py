@@ -462,6 +462,7 @@ for gpid, group in tqdm(df.groupby('gpid'), desc="Formatting samples for EPA pre
     defender_map = {row['nfl_id']: idx for idx, row in defenders.iterrows()}
     defenders_list = defenders[['x','y','vx','vy']].to_dict(orient='records')
     base_sample = {
+        'absolute_yardline_number': plays.query('gpid==@gpid')['absolute_yardline_number'].iloc[0],
         'receiver': group.query('player_role=="Targeted Receiver"')[['x','y','vx','vy']].iloc[0].to_dict(),
         'ball': group.query('position=="Ball"')[['x','y','vx','vy']].iloc[0].to_dict(),
         'defenders': defenders_list,
@@ -477,6 +478,7 @@ for gpid, group in tqdm(df.groupby('gpid'), desc="Formatting samples for EPA pre
 
         # Original sample with actual safety position
         samples.append({
+            'absolute_yardline_number': base_sample['absolute_yardline_number'].copy(),
             'receiver': base_sample['receiver'].copy(),
             'ball': base_sample['ball'].copy(),
             'defenders': [d.copy() for d in base_sample['defenders']],
@@ -494,6 +496,7 @@ for gpid, group in tqdm(df.groupby('gpid'), desc="Formatting samples for EPA pre
         # Simulated samples for each reachable point
         for _, point_row in safety_points.iterrows():
             modified_sample = {
+                'absolute_yardline_number': base_sample['absolute_yardline_number'].copy(),
                 'receiver': base_sample['receiver'].copy(),
                 'ball': base_sample['ball'].copy(),
                 'defenders': [d.copy() for d in base_sample['defenders']],  # Deep copy the list of dicts
@@ -515,7 +518,7 @@ graph_dataset = EPAGraphDataset(samples)
 ##############  v. Batch Predict EPA ###############
 EPA_MODEL_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/models/epa_gnn_model.pth'
 epa_model = EPAGNN(
-    node_feat_dim=6,
+    node_feat_dim=8,
     node_type_count=3,
     edge_feat_dim=11,
     global_dim=9,

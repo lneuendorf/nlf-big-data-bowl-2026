@@ -155,6 +155,7 @@ train_samples, val_samples, test_samples = [], [], []
 for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for EPA model"):
     play_tracking = df.query('gpid==@gpid').copy()
     play = plays.query('gpid==@gpid').iloc[0]
+    absolute_yardline_number = play['absolute_yardline_number'].item()
     assert play_tracking['frame_id'].nunique() == 1, f"More than one frame_id for gpid {gpid}"
     receiver_row = play_tracking.query('player_role=="Targeted Receiver"').iloc[0]
     ball_row = play_tracking.query('position=="Ball"').iloc[0]
@@ -190,7 +191,7 @@ for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for EPA model"):
         'zone_coverage': play_tracking['zone_coverage'].iloc[0],
         'down': play['down'],
         'ball_land_yards_to_first_down': max(play['yards_to_go'] - ball_row['x'], 0),
-        'ball_land_yards_to_endzone': max(110 - (play['absolute_yardline_number'] + ball_row['x']), 0),
+        'ball_land_yards_to_endzone': max(110 - (absolute_yardline_number + ball_row['x']), 0),
         'pass_distance': play['pass_distance'],
         'route_vertical': receiver_row['route_vertical'],
         'route_inside_break': receiver_row['route_inside_break'],
@@ -200,6 +201,7 @@ for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for EPA model"):
     target_epa = play['expected_points_added']
 
     sample = {
+        'absolute_yardline_number': absolute_yardline_number,
         'receiver': receiver,
         'ball': ball,
         'defenders': defenders,

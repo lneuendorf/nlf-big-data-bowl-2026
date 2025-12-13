@@ -12,7 +12,7 @@ LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class EPAGNN(nn.Module):
-    def __init__(self, node_feat_dim=6, node_type_count=3,
+    def __init__(self, node_feat_dim=8, node_type_count=3,
                  edge_feat_dim=11, global_dim=10,
                  hidden=64):
         super().__init__()
