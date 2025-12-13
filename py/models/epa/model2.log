@@ -1,0 +1,85 @@
+Tried adding endzone node. Model performance degraded slightly although predictions in endzone make more sense.
+
+Loading weekly data: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 18/18 [00:07<00:00,  2.28it/s]
+2025-12-13 12:21:09,787 - INFO - Tracking input shape: (4880579, 23), output shape: (562936, 6)
+2025-12-13 12:21:15,965 - INFO - Joined input and output tracking data: 14108 unique plays, 1384 unique nfl_ids
+2025-12-13 12:21:15,965 - INFO - Standardizing direction of play and players to be left to right
+2025-12-13 12:21:17,030 - INFO - Approximating missing speed, acceleration and direction values
+2025-12-13 12:21:19,242 - INFO - Correlation results for imputations: s_approx: speed R²=0.9897 | a_approx: accel R²=0.0445 | dir_approx: dir R²=0.0442
+2025-12-13 12:21:19,722 - INFO - Joining supplemental data to plays DataFrame
+2025-12-13 12:21:19,756 - INFO - Loading NFL PBP data for season 2023
+2025-12-13 12:21:19,756 - INFO - Loading pbp from local parquet file
+2025-12-13 12:21:20,065 - INFO - Mapping player IDs to nfl_id using seasonal rosters
+2025-12-13 12:21:20,065 - INFO - Rosters for season 2023 already cached, loading from parquet
+2025-12-13 12:21:33,919 - INFO - Defaulting passer to QB for play without a passer: 2023092406_3048
+2025-12-13 12:21:35,054 - INFO - Defaulting passer to QB for play without a passer: 2023102907_281
+2025-12-13 12:21:36,254 - INFO - Defaulting passer to QB for play without a passer: 2023101200_2306
+2025-12-13 12:21:37,431 - INFO - Defaulting passer to QB for play without a passer: 2023100801_391
+2025-12-13 12:21:38,595 - INFO - Defaulting passer to QB for play without a passer: 2023122407_1051
+2025-12-13 12:21:39,870 - WARNING - Dropping gpid 2023091002_599 with no passer and no QB
+2025-12-13 12:21:40,451 - WARNING - Dropping gpid 2023112606_4180 with no passer and no QB
+2025-12-13 12:21:41,069 - INFO - Defaulting passer to QB for play without a passer: 2023100105_3337
+2025-12-13 12:21:42,268 - INFO - Defaulting passer to QB for play without a passer: 2023121600_1352
+2025-12-13 12:21:44,188 - WARNING - Dropping gpid 2023121009_3594 with no passer and no QB
+2025-12-13 12:21:44,794 - INFO - Defaulting passer to QB for play without a passer: 2023123108_1819
+2025-12-13 12:21:46,164 - INFO - Defaulting passer to QB for play without a passer: 2023102208_2326
+2025-12-13 12:21:47,382 - INFO - Defaulting passer to QB for play without a passer: 2023111203_1068
+2025-12-13 12:21:48,644 - INFO - Defaulting passer to QB for play without a passer: 2023121400_2596
+2025-12-13 12:21:50,000 - INFO - Defaulting passer to QB for play without a passer: 2023121400_1904
+2025-12-13 12:21:51,343 - WARNING - Dropping gpid 2023091001_3216 with no passer and no QB
+2025-12-13 12:21:51,986 - WARNING - Dropping gpid 2023111905_2752 with no passer and no QB
+2025-12-13 12:21:52,624 - INFO - Defaulting passer to QB for play without a passer: 2023100107_1374
+2025-12-13 12:21:53,805 - INFO - Estimating ball path for each play
+2025-12-13 12:21:54,206 - WARNING - Dropping gpid 2023092406_3048 with 0 passers and 1 receivers
+2025-12-13 12:21:54,227 - WARNING - Dropping gpid 2023100105_3337 with 0 passers and 1 receivers
+2025-12-13 12:21:54,244 - WARNING - Dropping gpid 2023100801_391 with 0 passers and 1 receivers
+2025-12-13 12:21:54,260 - WARNING - Dropping gpid 2023101200_2306 with 0 passers and 1 receivers
+2025-12-13 12:21:54,295 - WARNING - Dropping gpid 2023102208_2326 with 0 passers and 1 receivers
+2025-12-13 12:21:54,312 - WARNING - Dropping gpid 2023102907_281 with 0 passers and 1 receivers
+2025-12-13 12:21:54,347 - WARNING - Dropping gpid 2023111203_1068 with 0 passers and 1 receivers
+2025-12-13 12:21:54,445 - WARNING - Dropping gpid 2023121400_1904 with 0 passers and 1 receivers
+2025-12-13 12:21:54,446 - WARNING - Dropping gpid 2023121400_2596 with 0 passers and 1 receivers
+2025-12-13 12:21:54,447 - WARNING - Dropping gpid 2023121600_1352 with 0 passers and 1 receivers
+2025-12-13 12:21:54,479 - WARNING - Dropping gpid 2023122407_1051 with 0 passers and 1 receivers
+2025-12-13 12:21:54,504 - WARNING - Dropping gpid 2023123108_1819 with 0 passers and 1 receivers
+2025-12-13 12:22:15,034 - INFO - Finished estimating ball path for 14091 plays
+2025-12-13 12:22:17,899 - INFO - Loading team description info from cached parquet.
+2025-12-13 12:22:18,040 - INFO - Dropping 2 plays with >4.0s ball airtime
+2025-12-13 12:22:21,816 - INFO - Defender dataset built: 31892 rows, 12 cols
+2025-12-13 12:22:21,966 - INFO - Trained model artifacts found.
+2025-12-13 12:22:21,988 - INFO - Loaded model and metadata from /Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/models/defender_reach
+Filtering plays with over 4 defenders: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 126/126 [00:00<00:00, 202.14it/s]
+2025-12-13 12:22:22,734 - INFO - Dropping 1400 plays with no defenders within 10 yards of the pass landing point
+2025-12-13 12:22:27,250 - INFO - Final number of pass plays: 12691
+Preparing samples for EPA model: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 12691/12691 [01:40<00:00, 125.67it/s]
+2025-12-13 12:24:08,248 - INFO - Starting model training
+2025-12-13 12:24:11,612 - INFO - Epoch 01 | Train Loss: 0.807 | Val Loss: 0.844
+2025-12-13 12:24:14,791 - INFO - Epoch 02 | Train Loss: 0.771 | Val Loss: 0.772
+2025-12-13 12:24:17,990 - INFO - Epoch 03 | Train Loss: 0.734 | Val Loss: 0.732
+2025-12-13 12:24:21,231 - INFO - Epoch 04 | Train Loss: 0.688 | Val Loss: 0.710
+2025-12-13 12:24:24,676 - INFO - Epoch 05 | Train Loss: 0.650 | Val Loss: 0.664
+2025-12-13 12:24:27,885 - INFO - Epoch 06 | Train Loss: 0.627 | Val Loss: 0.643
+2025-12-13 12:24:31,153 - INFO - Epoch 07 | Train Loss: 0.604 | Val Loss: 0.621
+2025-12-13 12:24:34,681 - INFO - Epoch 08 | Train Loss: 0.595 | Val Loss: 0.632
+2025-12-13 12:24:38,037 - INFO - Epoch 09 | Train Loss: 0.576 | Val Loss: 0.593
+2025-12-13 12:24:41,517 - INFO - Epoch 10 | Train Loss: 0.571 | Val Loss: 0.606
+2025-12-13 12:24:44,806 - INFO - Epoch 11 | Train Loss: 0.558 | Val Loss: 0.586
+2025-12-13 12:24:48,099 - INFO - Epoch 12 | Train Loss: 0.556 | Val Loss: 0.572
+2025-12-13 12:24:51,282 - INFO - Epoch 13 | Train Loss: 0.554 | Val Loss: 0.614
+2025-12-13 12:24:54,430 - INFO - Epoch 14 | Train Loss: 0.546 | Val Loss: 0.648
+2025-12-13 12:24:57,677 - INFO - Epoch 15 | Train Loss: 0.543 | Val Loss: 0.594
+2025-12-13 12:25:00,820 - INFO - Epoch 16 | Train Loss: 0.535 | Val Loss: 0.591
+2025-12-13 12:25:03,963 - INFO - Epoch 17 | Train Loss: 0.531 | Val Loss: 0.592
+2025-12-13 12:25:03,963 - INFO - Early stopping triggered at epoch 17.
+2025-12-13 12:25:03,964 - INFO - Restored best model with val loss: 0.5716
+2025-12-13 12:25:06,690 - INFO - ===== Final EPA Model Evaluation =====
+2025-12-13 12:25:06,690 - INFO - Split             MAE     SmoothL1          MSE         RMSE
+2025-12-13 12:25:06,690 - INFO - ------------------------------------------------------------
+2025-12-13 12:25:06,690 - INFO - Train          0.8406       0.5138       1.8437       1.3578
+2025-12-13 12:25:06,690 - INFO - Val            0.9075       0.5716       2.1712       1.4735
+2025-12-13 12:25:06,690 - INFO - Test           0.9258       0.5975       2.3002       1.5166
+2025-12-13 12:25:06,691 - INFO - ===== Baseline EPA Model Evaluation (Predicting Average EPA) =====
+2025-12-13 12:25:06,691 - INFO - Split             MAE     SmoothL1          MSE         RMSE
+2025-12-13 12:25:06,691 - INFO - ------------------------------------------------------------
+2025-12-13 12:25:06,691 - INFO - All            1.2070       0.7900       2.7227       1.6501
+2025-12-13 12:25:06,691 - INFO - Model training and evaluation complete, saving the model
