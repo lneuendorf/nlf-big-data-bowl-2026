@@ -54,6 +54,16 @@ LOG.info(f'Tracking input shape: {tracking_input.shape}, output shape: {tracking
 games, plays, players, tracking = preprocess.process_data(tracking_input, tracking_output, sup_data)
 team_desc = preprocess.fetch_team_desc()
 
+# Normalize the x coordinates relative to line of scrimmage
+tracking = tracking.merge(
+    plays[['gpid','absolute_yardline_number']],
+    on='gpid',
+    how='left'
+).assign(
+    x=lambda x: x['x'] - x['absolute_yardline_number']
+)
+plays['ball_land_x'] = plays['ball_land_x'] - plays['absolute_yardline_number']
+
 ##############  ii. Predict if defender is a part of the pass play ##############
 ds = DefenderReachDataset()
 defender_df = ds.generate_defender_data(tracking, plays)
@@ -151,12 +161,12 @@ free_safties = (
     )
     .query('frame_id == 1 and position in @valid_positions')
     .merge(
-        plays[['gpid','absolute_yardline_number', 'pass_distance']],
+        plays[['gpid', 'pass_distance']],
         on='gpid',
         how='left'
     )
     .assign(
-        downfield_distance=lambda x: x['x'] - x['absolute_yardline_number'],
+        downfield_distance=lambda x: x['x'],
         lateral_distance=lambda x: np.abs(x['y'] - 26.65)
     )
     .query('downfield_distance >= 8 and lateral_distance <= 10')
@@ -364,13 +374,6 @@ safety_reachable_points = generate_safety_reachable_points(
     y=lambda x: x['safety_sim_y'],
     vx=lambda x: x['safety_sim_s'] * np.cos(np.deg2rad(x['safety_sim_dir'])),
     vy=lambda x: x['safety_sim_s'] * np.sin(np.deg2rad(x['safety_sim_dir']))
-).merge(
-    plays[['gpid','absolute_yardline_number']],
-    how="left",
-    on="gpid"
-).assign(
-    # Normalize the x value relative to the line-of-scrimmage
-    x=lambda x: x['absolute_yardline_number'] - x['x']
 )
 
 LOG.info(f"Generated {len(safety_reachable_points)} reachable points")
@@ -386,15 +389,12 @@ df = (
       .assign(gpid_nflid=lambda x: x['gpid'] + '_' + x['nfl_id'].astype(str))
       .query('gpid_nflid in @defender_gpid_nflids or position=="Ball" or player_role=="Targeted Receiver"')
       .merge(
-          plays[['gpid','absolute_yardline_number','ball_land_x','ball_land_y','team_coverage_man_zone',
+          plays[['gpid','ball_land_x','ball_land_y','team_coverage_man_zone',
                  'route_of_targeted_receiver']],
           on='gpid',
           how='left'
       )
-      # Normalize x coordinates relative to line of scrimmage
       .assign(
-          x=lambda x: x['x'] - x['absolute_yardline_number'],
-          ball_land_x=lambda x: x['ball_land_x'] - x['absolute_yardline_number'],
           zone_coverage=lambda x: np.where(x['team_coverage_man_zone'] == "ZONE_COVERAGE", 1, 0),
           route_type=lambda x: np.select(
                 [
