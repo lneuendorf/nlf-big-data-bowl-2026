@@ -3,7 +3,7 @@ channels:
   - defaults
   - conda-forge
 dependencies:
-  - python=3.11
+  - python=3.12
   - ipython
   - jupyter
   - ipykernel
@@ -16,7 +16,6 @@ dependencies:
   - tqdm
   - ffmpeg
   - xgboost
-  - pymc
   - statsmodels
   - graphviz
   - scikit-optimize
@@ -24,4 +23,8 @@ dependencies:
   - shap
   - pip
   - pip:
-    - nfl-data-py
+    - nflreadpy
+    - pygam
+    - torch
+    - torchvision
+    - torch-geometric

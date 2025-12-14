@@ -1,0 +1,9 @@
+Simple Expected Points Model
+
+Baseline Model: alwasy predict the mean
+MAE: 2.6145, RMSE: 2.9572, R2: 0.0000
+
+GAM Model:
+Train -> MAE: 2.178, RMSE: 2.616, R2: 0.221
+Validation -> MAE: 2.153, RMSE: 2.586, R2: 0.219
+Test -> MAE: 2.170, RMSE: 2.606, R2: 0.229

@@ -1,0 +1,38 @@
+Added more dropout and a second GNN attention layer.
+
+2025-12-14 03:38:34,443 - INFO - Starting model training
+2025-12-14 03:38:40,648 - INFO - Epoch 01 | Train Loss: 0.424 | Val Loss: 0.395
+2025-12-14 03:38:44,832 - INFO - Epoch 02 | Train Loss: 0.399 | Val Loss: 0.375
+2025-12-14 03:38:48,630 - INFO - Epoch 03 | Train Loss: 0.377 | Val Loss: 0.339
+2025-12-14 03:38:52,280 - INFO - Epoch 04 | Train Loss: 0.358 | Val Loss: 0.322
+2025-12-14 03:38:55,672 - INFO - Epoch 05 | Train Loss: 0.347 | Val Loss: 0.314
+2025-12-14 03:38:59,042 - INFO - Epoch 06 | Train Loss: 0.344 | Val Loss: 0.311
+2025-12-14 03:39:02,480 - INFO - Epoch 07 | Train Loss: 0.340 | Val Loss: 0.308
+2025-12-14 03:39:05,877 - INFO - Epoch 08 | Train Loss: 0.337 | Val Loss: 0.308
+2025-12-14 03:39:09,251 - INFO - Epoch 09 | Train Loss: 0.336 | Val Loss: 0.313
+2025-12-14 03:39:12,706 - INFO - Epoch 10 | Train Loss: 0.334 | Val Loss: 0.299
+2025-12-14 03:39:16,145 - INFO - Epoch 11 | Train Loss: 0.334 | Val Loss: 0.305
+2025-12-14 03:39:19,575 - INFO - Epoch 12 | Train Loss: 0.330 | Val Loss: 0.309
+2025-12-14 03:39:22,992 - INFO - Epoch 13 | Train Loss: 0.330 | Val Loss: 0.299
+2025-12-14 03:39:26,453 - INFO - Epoch 14 | Train Loss: 0.327 | Val Loss: 0.296
+2025-12-14 03:39:29,837 - INFO - Epoch 15 | Train Loss: 0.326 | Val Loss: 0.303
+2025-12-14 03:39:33,338 - INFO - Epoch 16 | Train Loss: 0.324 | Val Loss: 0.296
+2025-12-14 03:39:36,765 - INFO - Epoch 17 | Train Loss: 0.324 | Val Loss: 0.303
+2025-12-14 03:39:40,275 - INFO - Epoch 18 | Train Loss: 0.325 | Val Loss: 0.294
+2025-12-14 03:39:43,698 - INFO - Epoch 19 | Train Loss: 0.322 | Val Loss: 0.297
+2025-12-14 03:39:47,245 - INFO - Epoch 20 | Train Loss: 0.321 | Val Loss: 0.297
+2025-12-14 03:39:50,690 - INFO - Epoch 21 | Train Loss: 0.320 | Val Loss: 0.296
+2025-12-14 03:39:54,268 - INFO - Epoch 22 | Train Loss: 0.320 | Val Loss: 0.303
+2025-12-14 03:39:58,571 - INFO - Epoch 23 | Train Loss: 0.318 | Val Loss: 0.299
+2025-12-14 03:39:58,572 - INFO - Early stopping triggered at epoch 23.
+2025-12-14 03:39:58,572 - INFO - Restored best model with val loss: 0.2936
+2025-12-14 03:40:01,978 - INFO - ===== Final Cmp Model Evaluation =====
+2025-12-14 03:40:01,978 - INFO - Split           AUROC      AvgPrec       F1  Precision   Recall
+2025-12-14 03:40:01,978 - INFO - ------------------------------------------------------------
+2025-12-14 03:40:01,978 - INFO - Train          0.8874       0.9294   0.8593     0.9012   0.8212
+2025-12-14 03:40:01,978 - INFO - Val            0.8611       0.9093   0.8300     0.8723   0.7917
+2025-12-14 03:40:01,978 - INFO - Test           0.8719       0.9159   0.8611     0.8915   0.8328
+2025-12-14 03:40:03,743 - INFO - ===== Baseline Cmp Model Evaluation (Predicting Completion) =====
+2025-12-14 03:40:03,743 - INFO -      AUROC      AvgPrec       F1  Precision   Recall
+2025-12-14 03:40:03,743 - INFO - ------------------------------------------------------------
+2025-12-14 03:40:03,743 - INFO -     0.5000       0.6863   0.8140     0.6863   1.0000

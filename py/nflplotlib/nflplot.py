@@ -6,6 +6,7 @@ import matplotlib.patheffects as pe
 import pandas as pd
 import numpy as np
 from IPython.display import HTML
+from matplotlib.patches import FancyArrowPatch
 
 def animate_play(
     tracking_play: pd.DataFrame, 
@@ -13,7 +14,10 @@ def animate_play(
     game: pd.DataFrame,
     team_desc: pd.DataFrame,
     save_path: str = None,
-    plot_positions: bool = False
+    plot_positions: bool = False,
+    highlight_postpass_players:bool = False,
+    show_postpass_paths: bool = False,
+    plot_arrows: bool = False,  # New parameter to enable arrows
 ):
     """Animate a single play from tracking data.
 
@@ -26,6 +30,12 @@ def animate_play(
             animation is displayed inline.
         plot_positions: If True, player positions (e.g., WR, QB) will be annotated over 
             the players.
+        highlight_postpass_players: If True, players involved in the pass after the ball
+            is thrown will be highlighted.
+        show_postpass_paths: If True, dashed lines will be drawn showing the paths of
+            players involved in the pass after the ball is thrown.
+        plot_arrows: If True, arrows will be drawn to indicate the direction of movement
+            for players and the ball.
 
     Returns:
         If save_path is None, returns an HTML object containing the animation.
@@ -220,6 +230,9 @@ def animate_play(
         )
 
     position_texts = []
+    player_path_lines = {}  # For post-pass paths
+    arrows = []  # For movement arrows
+
     def update(frame_tuple):
         frame_id, frame_data = frame_tuple
 
@@ -245,6 +258,56 @@ def animate_play(
         else:
             ball_path_line.set_data([], [])
 
+        # --- Highlight post-pass players ---
+        if highlight_postpass_players:
+            # Determine if pass has been thrown yet
+            pass_has_been_thrown = any(tracking_play['frame_id'] <= current_frame_id)
+            if pass_has_been_thrown and (tracking_play['pass_thrown'].any()):
+                postpass_players = frame_data[frame_data['player_to_predict'] == True]
+                if not postpass_players.empty:
+                    # Highlight on offense and defense separately
+                    off_colors = ['red' if pid in postpass_players['nfl_id'].values else 
+                                  edge_color_map['Offense'] for pid in off_data['nfl_id'].values]
+                    def_colors = ['red' if pid in postpass_players['nfl_id'].values else 
+                                    edge_color_map['Defense'] for pid in def_data['nfl_id'].values]
+                    scat_off.set_edgecolors(off_colors)
+                    scat_off.set_linewidths([3 if c == 'red' else 2 for c in off_colors])
+                    scat_def.set_edgecolors(def_colors)
+                    scat_def.set_linewidths([3 if c == 'red' else 2 for c in def_colors])
+        else:
+            # Reset edge colors to default if highlighting off
+            scat_off.set_edgecolors(edge_color_map['Offense'])
+            scat_def.set_edgecolors(edge_color_map['Defense'])
+            scat_off.set_linewidths(2)
+            scat_def.set_linewidths(2)
+
+        # --- Post-pass player paths ---
+        if show_postpass_paths:
+            # Get player_to_predict IDs
+            predicted_ids = tracking_play.loc[tracking_play['player_to_predict'] == True, 'nfl_id'].unique()
+
+            for pid in predicted_ids:
+                player_frames = tracking_play[
+                    (tracking_play['nfl_id'] == pid)
+                    & (tracking_play['pass_thrown'] == True)
+                    & (tracking_play['frame_id'] <= current_frame_id)
+                ]
+
+                # Only plot if pass has been thrown and there are frames
+                if not player_frames.empty:
+                    if pid not in player_path_lines:
+                        # Create a new dashed line for this player
+                        line, = ax.plot([], [], '--', color='black', linewidth=2, alpha=0.8, zorder=2)
+                        player_path_lines[pid] = line
+                    player_path_lines[pid].set_data(player_frames['x'].values, player_frames['y'].values)
+                elif pid in player_path_lines:
+                    # Clear line if not yet thrown
+                    player_path_lines[pid].set_data([], [])
+        else:
+            # Remove all player path lines if disabled
+            for line in player_path_lines.values():
+                line.set_data([], [])
+
         # --- Positions text ---
         for txt in position_texts:
             txt.remove()
@@ -265,8 +328,37 @@ def animate_play(
                 )
                 position_texts.append(t)
 
-        # Return all animated artists
-        return [scat_off, scat_def, scat_ball, ball_path_line, *position_texts]
+        
+        # --- Plot arrows for movement ---
+        if plot_arrows:
+            # Remove previous arrows
+            for arrow in arrows:
+                arrow.remove()
+            arrows.clear()
+
+            # Add new arrows for each player and the ball
+            for _, row in frame_data.iterrows():
+                x, y = row['x'], row['y']
+                length = 3.0 
+                angle_rad = np.radians(row['dir'])
+
+                dx = length * np.cos(angle_rad)
+                dy = length * np.sin(angle_rad)
+
+                arrow = FancyArrowPatch(
+                    posA=(x, y),
+                    posB=(x + dx, y + dy),
+                    arrowstyle='-|>', color='grey', mutation_scale=15, linewidth=2, zorder=3
+                )
+                ax.add_patch(arrow)
+                arrows.append(arrow)
+
+        # Collect all active artists
+        animated_artists = [scat_off, scat_def, scat_ball, ball_path_line, *position_texts, *arrows]
+        animated_artists.extend(player_path_lines.values())
+
+        return animated_artists
+
 
     # Create animation
     ani = animation.FuncAnimation(
