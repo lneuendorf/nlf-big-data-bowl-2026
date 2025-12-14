@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 
 class IntGNN(nn.Module):
-    def __init__(self, node_feat_dim=6, node_type_count=3,
+    def __init__(self, node_feat_dim=7, node_type_count=3,
                  edge_feat_dim=11, global_dim=6,
                  hidden=64):
         super().__init__()
@@ -72,7 +72,7 @@ class IntGNN(nn.Module):
 def get_class_weights(dataset):
     """Compute class weights based on training dataset imbalance."""
     labels = torch.cat([d.y for d in dataset])
-    pos_weight = (len(labels) - labels.sum()) / labels.sum()
+    pos_weight = min((len(labels) - labels.sum()) / labels.sum(), 10.0)
     return torch.tensor(pos_weight, dtype=torch.float32)
 
 
@@ -118,7 +118,8 @@ def train_model(
             optimizer.zero_grad()
 
             pred = model(batch)
-            loss = loss_fn(pred, batch.y.float())
+            y_smooth = batch.y.float() * 0.9 + 0.05
+            loss = loss_fn(pred, y_smooth)
             loss.backward()
             optimizer.step()
 
