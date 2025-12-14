@@ -24,6 +24,7 @@ dependencies:
   - pip
   - pip:
     - nflreadpy
+    - pygam
     - torch
     - torchvision
     - torch-geometric
