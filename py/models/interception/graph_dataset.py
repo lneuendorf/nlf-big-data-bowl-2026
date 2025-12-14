@@ -41,23 +41,27 @@ class IntGraphDataset(Dataset):
         node_feats = []
         node_types = []
 
+        # Helper to compute speed
+        def speed(vx, vy):
+            return math.sqrt(vx**2 + vy**2)
+
         # Receiver node
         rec_to_ball_dist = math.sqrt((receiver["x"] - ball["x"])**2 + (receiver["y"] - ball["y"])**2)
-        rec_speed = math.sqrt(receiver["vx"]**2 + receiver["vy"]**2)
+        rec_speed = speed(receiver["vx"], receiver["vy"])
         node_feats.append([
             receiver["x"], receiver["y"],
             receiver["vx"], receiver["vy"],
             rec_speed,
-            rec_to_ball_dist,
+            rec_to_ball_dist
         ])
         node_types.append(self.type_to_id["receiver"])
 
         # Ball node
-        ball_speed = math.sqrt(ball['vx']**2 + ball['vy']**2)
+        ball_speed = speed(ball.get('vx', 0.0), ball.get('vy', 0.0))
         node_feats.append([
-            ball["x"], ball["y"], 
-            ball["vx"], ball["vy"], 
-            ball_speed, 
+            ball["x"], ball["y"],
+            ball.get("vx", 0.0), ball.get("vy", 0.0),
+            ball_speed,
             0.0
         ])
         node_types.append(self.type_to_id["ball"])
@@ -65,9 +69,9 @@ class IntGraphDataset(Dataset):
         # Defender nodes
         for d in defenders:
             def_to_ball_dist = math.sqrt((d["x"] - ball["x"])**2 + (d["y"] - ball["y"])**2)
-            def_speed = math.sqrt(d["vx"]**2 + d["vy"]**2)
+            def_speed = speed(d["vx"], d["vy"])
             node_feats.append([
-                d["x"], d["y"], 
+                d["x"], d["y"],
                 d["vx"], d["vy"],
                 def_speed,
                 def_to_ball_dist
@@ -76,6 +80,37 @@ class IntGraphDataset(Dataset):
 
         node_feats = torch.tensor(node_feats, dtype=torch.float)
         node_types = torch.tensor(node_types, dtype=torch.long)
+
+        # -----------------------------
+        # 1b. Compute "first on ball path" feature
+        # -----------------------------
+        # Ball landing point (if available)
+        landing_x = ball.get("x_end", ball["x"])
+        landing_y = ball.get("y_end", ball["y"])
+        ball_start = torch.tensor([ball["x"], ball["y"]], dtype=torch.float)
+        ball_end = torch.tensor([landing_x, landing_y], dtype=torch.float)
+        ball_vec = ball_end - ball_start
+        ball_dist = torch.norm(ball_vec) + 1e-6
+        ball_dir = ball_vec / ball_dist
+
+        node_positions = node_feats[:, :2]  # x, y positions
+        relative_pos = node_positions - ball_start
+        projection = (relative_pos @ ball_dir)  # scalar projection along trajectory
+        perpendicular_dist = torch.norm(relative_pos - projection[:, None] * ball_dir, dim=1)
+
+        threshold = 1.0  # adjust for field scale
+        on_line = (perpendicular_dist < threshold) & (projection > 0) & (projection < ball_dist)
+
+        is_first_on_path = torch.zeros(node_feats.size(0), dtype=torch.float)
+        if on_line.any():
+            # First player along the trajectory (closest to ball start)
+            first_idx = torch.argmin(projection[on_line])
+            idxs = torch.nonzero(on_line).squeeze()
+            if idxs.ndim == 0:
+                idxs = idxs.unsqueeze(0)
+            is_first_on_path[idxs[first_idx]] = 1.0
+
+        node_feats = torch.cat([node_feats, is_first_on_path.unsqueeze(1)], dim=1)
 
         # -----------------------------
         # 2. Build fully-connected edges
@@ -95,9 +130,8 @@ class IntGraphDataset(Dataset):
         # -----------------------------
         edge_feats = []
         for i, j in zip(src, dst):
-            # Convert node features to Python floats
-            xi, yi, vxi, vyi, _, _ = node_feats[i].tolist()
-            xj, yj, vxj, vyj, _, _ = node_feats[j].tolist()
+            xi, yi, vxi, vyi, _, _ = node_feats[i, :6].tolist()
+            xj, yj, vxj, vyj, _, _ = node_feats[j, :6].tolist()
 
             type_i = node_types[i].item()
             type_j = node_types[j].item()
@@ -122,9 +156,6 @@ class IntGraphDataset(Dataset):
             cos_angle_j = math.cos(angle_diff_j)
             sin_angle_j = math.sin(angle_diff_j)
 
-            # -----------------------------
-            # Edge feature vector
-            # -----------------------------
             edge_feats.append([
                 dx,
                 dy,
@@ -148,7 +179,7 @@ class IntGraphDataset(Dataset):
             global_feats = torch.tensor([list(global_feats.values())], dtype=torch.float)
         else:
             global_feats = torch.tensor(global_feats, dtype=torch.float)
-        
+
         # -----------------------------
         # 5. Create Graph Data object
         # -----------------------------
