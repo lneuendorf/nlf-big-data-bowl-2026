@@ -26,7 +26,7 @@ RANDOM_SEED = 2
 np.random.seed(RANDOM_SEED)
 torch.manual_seed(RANDOM_SEED)
 N_WEEKS = 18
-SAVE_CSV_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/results'
+SAVE_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/results'
 
 # Was getting segfaults without these settings
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -534,5 +534,5 @@ for i in tqdm(range(0, graph_dataset.len(), BATCH_SIZE), desc="Predicting INT fo
 ##############  vi. Save Results ###############
 results_df = pd.DataFrame(meta_data)
 results_df['predicted_int'] = all_int_predictions   
-os.makedirs(SAVE_CSV_PATH, exist_ok=True)
-results_df.to_csv(os.path.join(SAVE_CSV_PATH, 'int_preds.csv'), index=False)
+os.makedirs(SAVE_PATH, exist_ok=True)
+results_df.to_parquet(os.path.join(SAVE_PATH, 'int_preds.parquet'), index=False)

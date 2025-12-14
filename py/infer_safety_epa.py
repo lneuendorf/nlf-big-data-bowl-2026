@@ -1,14 +1,3 @@
-"""
-Filter:
-- drop "throw away" plays where ball badely misses targeted receiver? These add noise to 
-  epa prediction, as if it was a throw away the defense always "wins"
-- focus specifically on free safety starting at least 8 yards downfield
-- pass must be at least x yards in air (safety needs time to react)
-
-Then find set of points safety can reach: pass into epa model plus actual point
-Find min epa of points vs actual point
-Save to csv with relevant info
-"""
 import logging
 import os
 from tqdm import tqdm
@@ -37,7 +26,7 @@ RANDOM_SEED = 2
 np.random.seed(RANDOM_SEED)
 torch.manual_seed(RANDOM_SEED)
 N_WEEKS = 18
-SAVE_CSV_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/results'
+SAVE_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/results'
 
 # Was getting segfaults without these settings
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -546,5 +535,5 @@ for i in tqdm(range(0, graph_dataset.len(), BATCH_SIZE), desc="Predicting EPA fo
 results_df = pd.DataFrame(meta_data)
 results_df['predicted_epa'] = all_epa_predictions
 
-os.makedirs(SAVE_CSV_PATH, exist_ok=True)
-results_df.to_csv(os.path.join(SAVE_CSV_PATH, 'epa_preds.csv'), index=False)
+os.makedirs(SAVE_PATH, exist_ok=True)
+results_df.to_parquet(os.path.join(SAVE_PATH, 'epa_preds.parquet'), index=False)
