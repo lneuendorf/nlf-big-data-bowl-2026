@@ -1,18 +1,25 @@
+#!/usr/bin/env python3
 import logging
 import os
 from tqdm import tqdm
+import sys
 import warnings
 warnings.filterwarnings("ignore")
 
 import pandas as pd
 import numpy as np
 import torch
+from sklearn.metrics import (
+    roc_auc_score, average_precision_score,
+    f1_score, precision_score, recall_score
+)
 
+sys.path.append('/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/py')
 from preprocess import preprocess
 from models.defender_reach.preprocessor import DefenderReachDataset
 from models.defender_reach.model import DefenderReachModel
-from models.epa.graph_dataset import EPAGraphDataset
-from models.epa.epa_gnn_model import train_model, evaluate_split
+from models.completion.graph_dataset import CmpGraphDataset
+from models.completion.cmp_gnn_model import train_model, evaluate_classification
 
 
 LOG = logging.getLogger(__name__)
@@ -37,6 +44,17 @@ LOG.info(f'Tracking input shape: {tracking_input.shape}, output shape: {tracking
 
 games, plays, players, tracking = preprocess.process_data(tracking_input, tracking_output, sup_data)
 team_desc = preprocess.fetch_team_desc()
+
+# NOTE: dropping interceptions. This model is the conditional probability of completion given no interception
+plays = (
+    plays
+    .query('pass_result != "IN"')
+    .assign(
+        completion=lambda x: np.where(x.pass_result == "C", 1, 0)
+    )
+)
+gpids = plays['gpid'].unique()
+tracking = tracking.query('gpid in @gpids').reset_index(drop=True)
 
 ##############  ii. Predict if defender is a part of the pass play ##############
 ds = DefenderReachDataset()
@@ -79,7 +97,7 @@ for gpid in tqdm(gpids_with_over_4_defenders, desc="Filtering plays with over 4 
 gpids_with_no_defenders = set(plays['gpid'].unique()) - set(defender_df['gpid'].unique())
 if gpids_with_no_defenders:
     LOG.info(f"Dropping {len(gpids_with_no_defenders)} plays with no defenders within 10 yards of the pass landing point")
-    defender_df = defender_df[~defender_df['gpid'].isin(gpids_with_no_defenders)].copy()
+    plays = plays.query('gpid not in @gpids_with_no_defenders').reset_index(drop=True)
 
 ##############  iii. Filter tracking data ###############
 gpids = defender_df['gpid'].unique()
@@ -145,14 +163,14 @@ df = (
 
 LOG.info(f"Final number of pass plays: {defender_df['gpid'].nunique()}")
 
-##############  iv. EPA Model Training ###############
+##############  iv. Cmp Model Training ###############
 
 # Training games week 1-14, validation week 15-16, test week 17-18
 train_games = games.query('week <= 14')['game_id'].unique()
 val_games = games.query('week >= 15 and week <=16')['game_id'].unique()
 test_games = games.query('week >= 17')['game_id'].unique()
 train_samples, val_samples, test_samples = [], [], []
-for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for EPA model"):
+for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for Cmp model"):
     play_tracking = df.query('gpid==@gpid').copy()
     play = plays.query('gpid==@gpid').iloc[0]
     absolute_yardline_number = play['absolute_yardline_number'].item()
@@ -189,24 +207,20 @@ for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for EPA model"):
         raise ValueError(f"No defenders for gpid {gpid}")
     global_features = {
         'zone_coverage': play_tracking['zone_coverage'].iloc[0],
-        'down': play['down'],
-        'ball_land_yards_to_first_down': max(play['yards_to_go'] - ball_row['x'], 0),
-        'ball_land_yards_to_endzone': max(110 - (absolute_yardline_number + ball_row['x']), 0),
         'pass_distance': play['pass_distance'],
         'route_vertical': receiver_row['route_vertical'],
         'route_inside_break': receiver_row['route_inside_break'],
         'route_outside_break': receiver_row['route_outside_break'],
         'route_underneath_short': receiver_row['route_underneath_short']
     }
-    target_epa = play['expected_points_added']
+    target_cmp = play['completion']
 
     sample = {
-        'absolute_yardline_number': absolute_yardline_number,
         'receiver': receiver,
         'ball': ball,
         'defenders': defenders,
         'global_features': global_features,
-        'target_epa': target_epa
+        'target_cmp': target_cmp
     }
     game_id = int(gpid.split('_')[0])
     if game_id in train_games:
@@ -217,9 +231,9 @@ for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for EPA model"):
         test_samples.append(sample)
     else:
         raise ValueError(f"Game ID {game_id} not found in any split")
-train_dataset = EPAGraphDataset(train_samples)
-val_dataset = EPAGraphDataset(val_samples)
-test_dataset = EPAGraphDataset(test_samples)
+train_dataset = CmpGraphDataset(train_samples)
+val_dataset = CmpGraphDataset(val_samples)
+test_dataset = CmpGraphDataset(test_samples)
 
 model = train_model(
     train_dataset, 
@@ -233,35 +247,39 @@ model = train_model(
 # ------------------------------
 # Evaluate Model
 # ------------------------------
-train_metrics = evaluate_split(model, train_dataset)
-val_metrics   = evaluate_split(model, val_dataset)
-test_metrics  = evaluate_split(model, test_dataset)
+train_metrics = evaluate_classification(model, train_dataset)
+val_metrics   = evaluate_classification(model, val_dataset)
+test_metrics  = evaluate_classification(model, test_dataset)
 
-LOG.info("===== Final EPA Model Evaluation =====")
-LOG.info(f"{'Split':<10} {'MAE':>10} {'SmoothL1':>12} {'MSE':>12} {'RMSE':>12}")
+LOG.info("===== Final Cmp Model Evaluation =====")
+LOG.info(f"{'Split':<10} {'AUROC':>10} {'AvgPrec':>12} {'F1':>8} {'Precision':>10} {'Recall':>8}")
 LOG.info("-" * 60)
-LOG.info(f"{'Train':<10} {train_metrics['MAE']:10.4f} {train_metrics['SmoothL1']:12.4f} "
-      f"{train_metrics['MSE']:12.4f} {train_metrics['RMSE']:12.4f}")
-LOG.info(f"{'Val':<10} {val_metrics['MAE']:10.4f} {val_metrics['SmoothL1']:12.4f} "
-      f"{val_metrics['MSE']:12.4f} {val_metrics['RMSE']:12.4f}")
-LOG.info(f"{'Test':<10} {test_metrics['MAE']:10.4f} {test_metrics['SmoothL1']:12.4f} "
-      f"{test_metrics['MSE']:12.4f} {test_metrics['RMSE']:12.4f}")
+LOG.info(f"{'Train':<10} {train_metrics['AUROC']:10.4f} {train_metrics['Average Precision']:12.4f} "
+      f"{train_metrics['F1']:8.4f} {train_metrics['Precision']:10.4f} {train_metrics['Recall']:8.4f}")
+LOG.info(f"{'Val':<10} {val_metrics['AUROC']:10.4f} {val_metrics['Average Precision']:12.4f} "
+      f"{val_metrics['F1']:8.4f} {val_metrics['Precision']:10.4f} {val_metrics['Recall']:8.4f}")
+LOG.info(f"{'Test':<10} {test_metrics['AUROC']:10.4f} {test_metrics['Average Precision']:12.4f} "
+      f"{test_metrics['F1']:8.4f} {test_metrics['Precision']:10.4f} {test_metrics['Recall']:8.4f}")
 
-# Baseline: Predict average EPA
-def smooth_l1(y_true, y_pred, delta=1.0):
-    diff = np.abs(y_true - y_pred)
-    loss = np.where(diff < delta, 0.5 * diff**2, delta * (diff - 0.5 * delta))
-    return np.mean(loss)
-avg_epa = plays.expected_points_added.mean()
-LOG.info("===== Baseline EPA Model Evaluation (Predicting Average EPA) =====")
-LOG.info(f"{'Split':<10} {'MAE':>10} {'SmoothL1':>12} {'MSE':>12} {'RMSE':>12}")
+# ------------------------------
+# Baseline: Predict majority class (completion)
+# ------------------------------
+y_true_all = torch.cat([d.y for d in train_dataset]).numpy()
+baseline_pred = np.ones_like(y_true_all)  # Predict all completions
+baseline_metrics = {
+    "AUROC": roc_auc_score(y_true_all, baseline_pred),
+    "Average Precision": average_precision_score(y_true_all, baseline_pred),
+    "F1": f1_score(y_true_all, baseline_pred),
+    "Precision": precision_score(y_true_all, baseline_pred),
+    "Recall": recall_score(y_true_all, baseline_pred),
+}
+
+LOG.info("===== Baseline Cmp Model Evaluation (Predicting Completion) =====")
+LOG.info(f"{'AUROC':>10} {'AvgPrec':>12} {'F1':>8} {'Precision':>10} {'Recall':>8}")
 LOG.info("-" * 60)
-LOG.info(f"{'All':<10} "
-      f"{np.mean(np.abs(plays.expected_points_added - avg_epa)):10.4f} "
-      f"{smooth_l1(plays.expected_points_added, avg_epa):12.4f} "
-      f"{np.mean((plays.expected_points_added - avg_epa)**2):12.4f} "
-      f"{np.sqrt(np.mean((plays.expected_points_added - avg_epa)**2)):12.4f}")
+LOG.info(f"{baseline_metrics['AUROC']:10.4f} {baseline_metrics['Average Precision']:12.4f} "
+      f"{baseline_metrics['F1']:8.4f} {baseline_metrics['Precision']:10.4f} {baseline_metrics['Recall']:8.4f}")
 
 LOG.info("Model training and evaluation complete, saving the model")
-SAVE_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/models/epa_gnn_model.pth'
+SAVE_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/models/cmp_gnn_model.pth'
 torch.save(model.state_dict(), SAVE_PATH)

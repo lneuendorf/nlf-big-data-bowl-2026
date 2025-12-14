@@ -1,22 +1,21 @@
+#!/usr/bin/env python3
 import logging
 import os
 from tqdm import tqdm
+import sys
 import warnings
 warnings.filterwarnings("ignore")
 
 import pandas as pd
 import numpy as np
 import torch
-from sklearn.metrics import (
-    roc_auc_score, average_precision_score,
-    f1_score, precision_score, recall_score
-)
 
+sys.path.append('/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/py')
 from preprocess import preprocess
 from models.defender_reach.preprocessor import DefenderReachDataset
 from models.defender_reach.model import DefenderReachModel
-from models.interception.graph_dataset import IntGraphDataset
-from models.interception.int_gnn_model import train_model, evaluate_classification
+from models.yac.graph_dataset import YACGraphDataset
+from models.yac.yac_gnn_model import train_model, evaluate_split
 
 
 LOG = logging.getLogger(__name__)
@@ -42,9 +41,10 @@ LOG.info(f'Tracking input shape: {tracking_input.shape}, output shape: {tracking
 games, plays, players, tracking = preprocess.process_data(tracking_input, tracking_output, sup_data)
 team_desc = preprocess.fetch_team_desc()
 
-plays = plays.assign(
-    interception=lambda x: np.where(x.pass_result == "IN", 1, 0)
-)
+# NOTE: only training on completions. This model is the conditional YAC given a completion
+plays = plays.query('pass_result == "C"')
+gpids = plays['gpid'].unique()
+tracking = tracking.query('gpid in @gpids').reset_index(drop=True)
 
 ##############  ii. Predict if defender is a part of the pass play ##############
 ds = DefenderReachDataset()
@@ -153,14 +153,14 @@ df = (
 
 LOG.info(f"Final number of pass plays: {defender_df['gpid'].nunique()}")
 
-##############  iv. Int Model Training ###############
+##############  iv. YAC Model Training ###############
 
 # Training games week 1-14, validation week 15-16, test week 17-18
 train_games = games.query('week <= 14')['game_id'].unique()
 val_games = games.query('week >= 15 and week <=16')['game_id'].unique()
 test_games = games.query('week >= 17')['game_id'].unique()
 train_samples, val_samples, test_samples = [], [], []
-for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for Int model"):
+for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for YAC model"):
     play_tracking = df.query('gpid==@gpid').copy()
     play = plays.query('gpid==@gpid').iloc[0]
     absolute_yardline_number = play['absolute_yardline_number'].item()
@@ -197,13 +197,16 @@ for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for Int model"):
         raise ValueError(f"No defenders for gpid {gpid}")
     global_features = {
         'zone_coverage': play_tracking['zone_coverage'].iloc[0],
+        'down': play['down'],
+        'ball_land_yards_to_first_down': max(play['yards_to_go'] - ball_row['x'], 0),
+        'ball_land_yards_to_endzone': max(110 - (absolute_yardline_number + ball_row['x']), 0),
         'pass_distance': play['pass_distance'],
         'route_vertical': receiver_row['route_vertical'],
         'route_inside_break': receiver_row['route_inside_break'],
         'route_outside_break': receiver_row['route_outside_break'],
         'route_underneath_short': receiver_row['route_underneath_short']
     }
-    target_int = play['interception']
+    target_yac = play['yards_after_catch'].item()
 
     sample = {
         'absolute_yardline_number': absolute_yardline_number,
@@ -211,7 +214,7 @@ for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for Int model"):
         'ball': ball,
         'defenders': defenders,
         'global_features': global_features,
-        'target_int': target_int
+        'target_yac': target_yac
     }
     game_id = int(gpid.split('_')[0])
     if game_id in train_games:
@@ -222,9 +225,9 @@ for gpid in tqdm(df['gpid'].unique(), desc="Preparing samples for Int model"):
         test_samples.append(sample)
     else:
         raise ValueError(f"Game ID {game_id} not found in any split")
-train_dataset = IntGraphDataset(train_samples)
-val_dataset = IntGraphDataset(val_samples)
-test_dataset = IntGraphDataset(test_samples)
+train_dataset = YACGraphDataset(train_samples)
+val_dataset = YACGraphDataset(val_samples)
+test_dataset = YACGraphDataset(test_samples)
 
 model = train_model(
     train_dataset, 
@@ -238,39 +241,35 @@ model = train_model(
 # ------------------------------
 # Evaluate Model
 # ------------------------------
-train_metrics = evaluate_classification(model, train_dataset)
-val_metrics   = evaluate_classification(model, val_dataset)
-test_metrics  = evaluate_classification(model, test_dataset)
+train_metrics = evaluate_split(model, train_dataset)
+val_metrics   = evaluate_split(model, val_dataset)
+test_metrics  = evaluate_split(model, test_dataset)
 
-LOG.info("===== Final Int Model Evaluation =====")
-LOG.info(f"{'Split':<10} {'AUROC':>10} {'AvgPrec':>12} {'F1':>8} {'Precision':>10} {'Recall':>8}")
+LOG.info("===== Final YAC Model Evaluation =====")
+LOG.info(f"{'Split':<10} {'MAE':>10} {'SmoothL1':>12} {'MSE':>12} {'RMSE':>12}")
 LOG.info("-" * 60)
-LOG.info(f"{'Train':<10} {train_metrics['AUROC']:10.4f} {train_metrics['Average Precision']:12.4f} "
-      f"{train_metrics['F1']:8.4f} {train_metrics['Precision']:10.4f} {train_metrics['Recall']:8.4f}")
-LOG.info(f"{'Val':<10} {val_metrics['AUROC']:10.4f} {val_metrics['Average Precision']:12.4f} "
-      f"{val_metrics['F1']:8.4f} {val_metrics['Precision']:10.4f} {val_metrics['Recall']:8.4f}")
-LOG.info(f"{'Test':<10} {test_metrics['AUROC']:10.4f} {test_metrics['Average Precision']:12.4f} "
-      f"{test_metrics['F1']:8.4f} {test_metrics['Precision']:10.4f} {test_metrics['Recall']:8.4f}")
+LOG.info(f"{'Train':<10} {train_metrics['MAE']:10.4f} {train_metrics['SmoothL1']:12.4f} "
+      f"{train_metrics['MSE']:12.4f} {train_metrics['RMSE']:12.4f}")
+LOG.info(f"{'Val':<10} {val_metrics['MAE']:10.4f} {val_metrics['SmoothL1']:12.4f} "
+      f"{val_metrics['MSE']:12.4f} {val_metrics['RMSE']:12.4f}")
+LOG.info(f"{'Test':<10} {test_metrics['MAE']:10.4f} {test_metrics['SmoothL1']:12.4f} "
+      f"{test_metrics['MSE']:12.4f} {test_metrics['RMSE']:12.4f}")
 
-# ------------------------------
-# Baseline: Predict majority class (no interception)
-# ------------------------------
-y_true_all = torch.cat([d.y for d in train_dataset]).numpy()
-baseline_pred = np.zeros_like(y_true_all)  # predict 0 for all (no interception)
-baseline_metrics = {
-    "AUROC": roc_auc_score(y_true_all, baseline_pred),
-    "Average Precision": average_precision_score(y_true_all, baseline_pred),
-    "F1": f1_score(y_true_all, baseline_pred),
-    "Precision": precision_score(y_true_all, baseline_pred),
-    "Recall": recall_score(y_true_all, baseline_pred),
-}
-
-LOG.info("===== Baseline Int Model Evaluation (Predicting No Interception) =====")
-LOG.info(f"{'AUROC':>10} {'AvgPrec':>12} {'F1':>8} {'Precision':>10} {'Recall':>8}")
+# Baseline: Predict average YAC
+def smooth_l1(y_true, y_pred, delta=1.0):
+    diff = np.abs(y_true - y_pred)
+    loss = np.where(diff < delta, 0.5 * diff**2, delta * (diff - 0.5 * delta))
+    return np.mean(loss)
+avg_yac = plays.yards_after_catch.mean()
+LOG.info("===== Baseline YAC Model Evaluation (Predicting Average YAC) =====")
+LOG.info(f"{'Split':<10} {'MAE':>10} {'SmoothL1':>12} {'MSE':>12} {'RMSE':>12}")
 LOG.info("-" * 60)
-LOG.info(f"{baseline_metrics['AUROC']:10.4f} {baseline_metrics['Average Precision']:12.4f} "
-      f"{baseline_metrics['F1']:8.4f} {baseline_metrics['Precision']:10.4f} {baseline_metrics['Recall']:8.4f}")
+LOG.info(f"{'All':<10} "
+      f"{np.mean(np.abs(plays.yards_after_catch - avg_yac)):10.4f} "
+      f"{smooth_l1(plays.yards_after_catch, avg_yac):12.4f} "
+      f"{np.mean((plays.yards_after_catch - avg_yac)**2):12.4f} "
+      f"{np.sqrt(np.mean((plays.yards_after_catch - avg_yac)**2)):12.4f}")
 
 LOG.info("Model training and evaluation complete, saving the model")
-SAVE_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/models/int_gnn_model.pth'
+SAVE_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/models/yac_gnn_model.pth'
 torch.save(model.state_dict(), SAVE_PATH)

@@ -1,0 +1,29 @@
+2025-12-14 03:30:11,432 - INFO - Starting model training
+2025-12-14 03:30:15,587 - INFO - Epoch 01 | Train Loss: 0.411 | Val Loss: 0.378
+2025-12-14 03:30:18,201 - INFO - Epoch 02 | Train Loss: 0.371 | Val Loss: 0.321
+2025-12-14 03:30:20,870 - INFO - Epoch 03 | Train Loss: 0.349 | Val Loss: 0.315
+2025-12-14 03:30:23,655 - INFO - Epoch 04 | Train Loss: 0.346 | Val Loss: 0.318
+2025-12-14 03:30:26,366 - INFO - Epoch 05 | Train Loss: 0.342 | Val Loss: 0.329
+2025-12-14 03:30:29,167 - INFO - Epoch 06 | Train Loss: 0.338 | Val Loss: 0.312
+2025-12-14 03:30:31,782 - INFO - Epoch 07 | Train Loss: 0.338 | Val Loss: 0.313
+2025-12-14 03:30:34,610 - INFO - Epoch 08 | Train Loss: 0.335 | Val Loss: 0.308
+2025-12-14 03:30:37,271 - INFO - Epoch 09 | Train Loss: 0.335 | Val Loss: 0.306
+2025-12-14 03:30:40,062 - INFO - Epoch 10 | Train Loss: 0.333 | Val Loss: 0.314
+2025-12-14 03:30:42,843 - INFO - Epoch 11 | Train Loss: 0.329 | Val Loss: 0.304
+2025-12-14 03:30:45,463 - INFO - Epoch 12 | Train Loss: 0.327 | Val Loss: 0.307
+2025-12-14 03:30:48,300 - INFO - Epoch 13 | Train Loss: 0.326 | Val Loss: 0.305
+2025-12-14 03:30:50,939 - INFO - Epoch 14 | Train Loss: 0.327 | Val Loss: 0.307
+2025-12-14 03:30:53,787 - INFO - Epoch 15 | Train Loss: 0.326 | Val Loss: 0.306
+2025-12-14 03:30:56,529 - INFO - Epoch 16 | Train Loss: 0.324 | Val Loss: 0.308
+2025-12-14 03:30:56,529 - INFO - Early stopping triggered at epoch 16.
+2025-12-14 03:30:56,530 - INFO - Restored best model with val loss: 0.3042
+2025-12-14 03:30:58,979 - INFO - ===== Final Cmp Model Evaluation =====
+2025-12-14 03:30:58,979 - INFO - Split           AUROC      AvgPrec       F1  Precision   Recall
+2025-12-14 03:30:58,979 - INFO - ------------------------------------------------------------
+2025-12-14 03:30:58,979 - INFO - Train          0.8748       0.9221   0.8602     0.8840   0.8376
+2025-12-14 03:30:58,979 - INFO - Val            0.8481       0.9043   0.8313     0.8535   0.8102
+2025-12-14 03:30:58,979 - INFO - Test           0.8659       0.9143   0.8623     0.8763   0.8488
+2025-12-14 03:31:00,456 - INFO - ===== Baseline Cmp Model Evaluation (Predicting Completion) =====
+2025-12-14 03:31:00,456 - INFO -      AUROC      AvgPrec       F1  Precision   Recall
+2025-12-14 03:31:00,456 - INFO - ------------------------------------------------------------
+2025-12-14 03:31:00,456 - INFO -     0.5000       0.6863   0.8140     0.6863   1.0000

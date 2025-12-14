@@ -11,7 +11,7 @@ import copy
 LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-class EPAGNN(nn.Module):
+class YACGNN(nn.Module):
     def __init__(self, node_feat_dim=9, node_type_count=3,
                  edge_feat_dim=11, global_dim=10,
                  hidden=64):
@@ -77,7 +77,7 @@ def train_model(
     if val_dataset is not None:
         val_loader = DataLoader(val_dataset, batch_size=batch_size)
 
-        model = EPAGNN(
+        model = YACGNN(
         node_feat_dim=train_dataset[0].x.shape[1],
         node_type_count=3,
         edge_feat_dim=train_dataset[0].edge_attr.shape[1],

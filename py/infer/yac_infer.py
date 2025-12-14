@@ -1,6 +1,8 @@
+#!/usr/bin/env python3
 import logging
 import os
 from tqdm import tqdm
+import sys
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -9,15 +11,16 @@ import numpy as np
 import torch
 from torch_geometric.data import Batch
 
+sys.path.append('/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/py')
 from preprocess import preprocess
 from models.defender_reach.preprocessor import DefenderReachDataset
 from models.defender_reach.model import DefenderReachModel
-from models.interception.graph_dataset import IntGraphDataset
+from models.yac.graph_dataset import YACGraphDataset
 from models.safety_reachable_points.safety_reach import (
     simulate_outer_points,
     fill_polygon_with_grid
 )
-from models.interception.int_gnn_model import IntGNN
+from models.yac.yac_gnn_model import YACGNN
 
 LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -58,7 +61,7 @@ ds = DefenderReachDataset()
 defender_df = ds.generate_defender_data(tracking, plays)
 model = DefenderReachModel()
 if not model.check_is_trained():
-    raise Exception("Defender Reach Model not trained. Run train_gnn_int_model.py before running this script.")
+    raise Exception("Defender Reach Model not trained. Run train/yac_train.py before running this script.")
 model.load()
 defender_df.loc[:, ['within_10_yards_proba', 'within_10_yards_pred']] = model.predict(defender_df)
 
@@ -445,7 +448,7 @@ df = (
 samples = []
 meta_data = []
 # For each play and each free safety, create samples for original and simulated points
-for gpid, group in tqdm(df.groupby('gpid'), desc="Formatting samples for Int prediction"):
+for gpid, group in tqdm(df.groupby('gpid'), desc="Formatting samples for YAC prediction"):
     safety_nfl_ids = free_safties.query('gpid==@gpid').nfl_id.unique().tolist()
     defenders = group.query('player_role=="Defensive Coverage"').reset_index(drop=True)
     defender_map = {row['nfl_id']: idx for idx, row in defenders.iterrows()}
@@ -455,9 +458,10 @@ for gpid, group in tqdm(df.groupby('gpid'), desc="Formatting samples for Int pre
         'receiver': group.query('player_role=="Targeted Receiver"')[['x','y','vx','vy']].iloc[0].to_dict(),
         'ball': group.query('position=="Ball"')[['x','y','vx','vy']].iloc[0].to_dict(),
         'defenders': defenders_list,
-        'global_features': group[['zone_coverage','pass_distance',
+        'global_features': group[['zone_coverage','down','ball_land_yards_to_first_down',
+                                 'ball_land_yards_to_endzone','pass_distance',
                                  'route_vertical','route_inside_break','route_outside_break','route_underneath_short']].iloc[0].to_dict(),
-        'target_int': None  # Placeholder, as we are predicting Int
+        'target_yac': None  # Placeholder, as we are predicting YAC
     }
 
     for safety_nfl_id in safety_nfl_ids:
@@ -471,7 +475,7 @@ for gpid, group in tqdm(df.groupby('gpid'), desc="Formatting samples for Int pre
             'ball': base_sample['ball'].copy(),
             'defenders': [d.copy() for d in base_sample['defenders']],
             'global_features': base_sample['global_features'].copy(),
-            'target_int': None
+            'target_yac': None
         })
         meta_data.append({
             'gpid': gpid,
@@ -488,7 +492,8 @@ for gpid, group in tqdm(df.groupby('gpid'), desc="Formatting samples for Int pre
                 'receiver': base_sample['receiver'].copy(),
                 'ball': base_sample['ball'].copy(),
                 'defenders': [d.copy() for d in base_sample['defenders']],  # Deep copy the list of dicts
-                'global_features': base_sample['global_features'].copy()
+                'global_features': base_sample['global_features'].copy(),
+                'target_yac': None
             }
             modified_sample['defenders'][defender_map[safety_nfl_id]] = point_row[['x','y','vx','vy']].to_dict()
             samples.append(modified_sample)
@@ -501,38 +506,37 @@ for gpid, group in tqdm(df.groupby('gpid'), desc="Formatting samples for Int pre
             })
 LOG.info(f"Total number of samples (original + simulated): {len(samples)}")
 
-graph_dataset = IntGraphDataset(samples)
+graph_dataset = YACGraphDataset(samples)
 
-##############  v. Batch Predict INT ###############
-INT_MODEL_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/models/int_gnn_model.pth'
-int_model = IntGNN(
-    node_feat_dim=7,
+##############  v. Batch Predict YAC ###############
+YAC_MODEL_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/models/yac_gnn_model.pth'
+yac_model = YACGNN(
+    node_feat_dim=9,
     node_type_count=3,
     edge_feat_dim=11,
-    global_dim=6,
+    global_dim=9,
     hidden=64,
 )
-checkpoint = torch.load(INT_MODEL_PATH, map_location=torch.device('cpu'))
+checkpoint = torch.load(YAC_MODEL_PATH, map_location=torch.device('cpu'))
 if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-    int_model.load_state_dict(checkpoint['model_state_dict'])
+    yac_model.load_state_dict(checkpoint['model_state_dict'])
 else:
-    int_model.load_state_dict(checkpoint)
-int_model.eval()
+    yac_model.load_state_dict(checkpoint)
+yac_model.eval()
 BATCH_SIZE = 64
-all_int_predictions = []
-for i in tqdm(range(0, graph_dataset.len(), BATCH_SIZE), desc="Predicting INT for samples"):
+all_yac_predictions = []
+for i in tqdm(range(0, graph_dataset.len(), BATCH_SIZE), desc="Predicting YAC for samples"):
     batch_samples = [graph_dataset.get(j) for j in range(i, min(i + BATCH_SIZE, graph_dataset.len()))]
     batch = Batch.from_data_list(batch_samples)
     with torch.no_grad():
-        int_logits = int_model(batch)
-        int_preds = torch.sigmoid(int_logits).squeeze()
-    if int_preds.dim() == 0:
-        all_int_predictions.append(int_preds.item())
+        yac_preds = yac_model(batch).squeeze()
+    if yac_preds.dim() == 0:
+        all_yac_predictions.append(yac_preds.item())
     else:
-        all_int_predictions.extend(int_preds.cpu().numpy().flatten().tolist())
+        all_yac_predictions.extend(yac_preds.cpu().numpy().flatten().tolist())
 
 ##############  vi. Save Results ###############
 results_df = pd.DataFrame(meta_data)
-results_df['predicted_int'] = all_int_predictions   
+results_df['predicted_yac'] = all_yac_predictions
 os.makedirs(SAVE_PATH, exist_ok=True)
-results_df.to_parquet(os.path.join(SAVE_PATH, 'int_preds.parquet'), index=False)
+results_df.to_parquet(os.path.join(SAVE_PATH, 'yac_preds.parquet'), index=False)
