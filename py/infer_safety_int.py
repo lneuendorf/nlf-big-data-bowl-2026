@@ -25,7 +25,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 RANDOM_SEED = 2
 np.random.seed(RANDOM_SEED)
 torch.manual_seed(RANDOM_SEED)
-N_WEEKS = 1
+N_WEEKS = 18
 SAVE_CSV_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/results'
 
 # Was getting segfaults without these settings
@@ -506,7 +506,7 @@ graph_dataset = IntGraphDataset(samples)
 ##############  v. Batch Predict INT ###############
 INT_MODEL_PATH = '/Users/lukeneuendorf/projects/nfl-big-data-bowl-2026/data/models/int_gnn_model.pth'
 int_model = IntGNN(
-    node_feat_dim=6,
+    node_feat_dim=7,
     node_type_count=3,
     edge_feat_dim=11,
     global_dim=6,
