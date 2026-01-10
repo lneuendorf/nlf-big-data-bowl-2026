@@ -7,7 +7,7 @@ def simulate_outer_points(
     bin_deg=5,
     dt_sim=0.1,
     sim_time=2.0,
-    max_speed=7,
+    max_speed=8,
     max_acc=7.0,
     max_turn_rate=2.0,
     slow_turn_multiplier=2.5

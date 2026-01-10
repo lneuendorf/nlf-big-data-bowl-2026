@@ -1,0 +1,4 @@
+1. output data only includes subset of defenders. Also, very important data missing in that only 
+    the receiver is included. to more accurately predict epa on a play, blockign offensive players could be added
+    but could not do that here given that data was not provided
+2. more data -> ~12k training samples is not a lot for a deep learning model

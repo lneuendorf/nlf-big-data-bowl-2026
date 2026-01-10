@@ -17,7 +17,9 @@ def animate_play(
     plot_positions: bool = False,
     highlight_postpass_players:bool = False,
     show_postpass_paths: bool = False,
-    plot_arrows: bool = False,  # New parameter to enable arrows
+    plot_arrows: bool = False,
+    show_ball_trajectory: bool = True,
+    plot_heatmap: bool = False,
 ):
     """Animate a single play from tracking data.
 
@@ -49,6 +51,75 @@ def animate_play(
 
     tracking_play = tracking_play.sort_values(by='frame_id')
 
+    # freeze and hold first frame for 10 frames
+    first_frame = tracking_play['frame_id'].min()
+    first_frame_data = tracking_play[tracking_play['frame_id'] == first_frame]
+    for i in range(1, 11):
+        temp = first_frame_data.copy()
+        temp['frame_id'] = first_frame - i
+        tracking_play = pd.concat([tracking_play, temp], axis=0)
+
+    # freeze and hold last frame for 20 frames
+    last_frame = tracking_play['frame_id'].max()
+    last_frame_data = tracking_play[tracking_play['frame_id'] == last_frame]
+    for i in range(1, 21):
+        temp = last_frame_data.copy()
+        temp['frame_id'] = last_frame + i
+        tracking_play = pd.concat([tracking_play, temp], axis=0)
+
+    # Initialize safety tracker and heatmap data
+    safety_epa_line = None
+    safety_current_epa = None
+    
+    if plot_heatmap:
+        heatmap_data = (
+            pd.read_parquet('../data/results/epa_predictions.parquet')
+            .query('gpid == @tracking_play.gpid.values[0]')
+            .loc[:, ['safety_nfl_id', 'num_frames_output', 'x', 'y', 'EPA']]
+            .assign(
+                x = lambda df: 120 - df['x'],
+                y = lambda df: 53.3 - df['y']
+            )
+        ).head(4407)
+        safety_id = heatmap_data['safety_nfl_id'].values[0]
+        num_frames_output = heatmap_data['num_frames_output'].values[0]
+        last_frame = tracking_play['frame_id'].max()
+        heatmap_start_frame = max(0, last_frame - num_frames_output - 10 - 20) # one second before ball throw and 10 frame hold
+        
+        # Get EPA min/max for colorbar
+        epa_min = heatmap_data['EPA'].min()
+        epa_max = heatmap_data['EPA'].max()
+        print(f"Heatmap EPA range: {epa_min:.2f} to {epa_max:.2f}")
+        
+        # Calculate nice tick positions
+        epa_range = epa_max - epa_min
+        if epa_range <= 0.1:
+            tick_step = 0.02
+        elif epa_range <= 0.5:
+            tick_step = 0.1
+        elif epa_range <= 1.0:
+            tick_step = 0.2
+        else:
+            tick_step = 0.5
+        
+        # Generate ticks from min to max with step
+        epa_ticks = np.arange(
+            np.floor(epa_min / tick_step) * tick_step,
+            np.ceil(epa_max / tick_step) * tick_step + tick_step/2,
+            tick_step
+        )
+        epa_ticks = epa_ticks[(epa_ticks >= epa_min) & (epa_ticks <= epa_max)]
+        
+        # Ensure we have at least 3 ticks
+        if len(epa_ticks) < 3:
+            epa_ticks = np.linspace(epa_min, epa_max, 3)
+    else:
+        heatmap_data = None
+        safety_id = None
+        epa_min = 0
+        epa_max = 0
+        epa_ticks = []
+
     # Calculate x-axis limits based on play data
     all_x = tracking_play['x'].dropna()
     min_x = all_x.min()
@@ -58,11 +129,11 @@ def animate_play(
     # Ensure at least 50 yards of width, plus 2 yard buffer on each side
     if x_range < 50:
         center_x = (min_x + max_x) / 2
-        min_x = center_x - 25 - 2  # 25 yards on each side plus buffer
+        min_x = center_x - 25 - 2
         max_x = center_x + 25 + 2
     else:
-        min_x = min_x - 2  # Add 2 yard buffer
-        max_x = max_x + 2  # Add 2 yard buffer
+        min_x = min_x - 2
+        max_x = max_x + 2
 
     min_x = 0 if min_x < 10 else min_x
     max_x = 120 if max_x > 110 else max_x
@@ -72,16 +143,24 @@ def animate_play(
     max_x = min(120, max_x)
 
     # --- Plot setup ---
-    fig, ax = plt.subplots(figsize=(10, 7))
+    if plot_heatmap:
+        # Create figure with adjusted width for colorbar
+        fig, (ax, cax) = plt.subplots(
+            1, 2, 
+            figsize=(11.5, 7),
+            gridspec_kw={'width_ratios': [10, 0.5], 'wspace': 0.05}
+        )
+    else:
+        fig, ax = plt.subplots(figsize=(10, 7))
+    
     ax.set_xlim(min_x-.1, max_x+.1)
-    ax.set_ylim(-0.1, 53.4)  # Field width becomes y-axis
-    # ax.set_aspect('equal') # Equal aspect ratio between x and y axes
+    ax.set_ylim(-0.1, 53.4)
     
     # Remove axis elements
-    ax.set_xticks([])  # Remove x-axis ticks
-    ax.set_yticks([])  # Remove y-axis ticks
-    ax.set_xlabel('')  # Remove x-axis label
-    ax.set_ylabel('')  # Remove y-axis label
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xlabel('')
+    ax.set_ylabel('')
     
     # Remove the axis spine/border
     ax.spines['top'].set_visible(False)
@@ -91,7 +170,7 @@ def animate_play(
         
     # Add vertical yard lines every 5 yards on the x-axis
     for yard_line in range(max(int(np.ceil(min_x)), 10), min(int(np.floor(max_x)), 110) + 1):
-        if yard_line % 5 == 0:  # Every 5 yards
+        if yard_line % 5 == 0:
             ax.axvline(x=yard_line, color='gray', linestyle='-', alpha=0.5, zorder=1)
 
     # Add horizontal lines at top and bottom of the field
@@ -104,7 +183,7 @@ def animate_play(
     
     ax = _plot_yardline_numbers(ax, min_x, max_x)
 
-    # NFL hash marks (18'6" apart on inner edges)
+    # NFL hash marks
     hash_width = .33
     hash_y_positions = [
         hash_width,
@@ -113,9 +192,7 @@ def animate_play(
         53.3 - hash_width
     ]
     for yard_line in range(max(int(np.ceil(min_x)), 10), min(int(np.floor(max_x)), 110) + 1):
-        # Only draw hash marks for yards not divisible by 5
         if yard_line % 5 != 0:
-            # Draw hash marks at both hash positions
             for hash_y in hash_y_positions:
                 ax.plot([yard_line, yard_line], [hash_y - hash_width, hash_y + hash_width], 
                     color='gray', linestyle='-', alpha=0.7, linewidth=1, zorder=1)
@@ -126,7 +203,7 @@ def animate_play(
 
     # Plot the first down line
     ytg = play['yards_to_go'].values[0]
-    ax.axvline(x=los_x + ytg, color='yellow', linestyle='-', alpha=0.8, linewidth=2, zorder=2)
+    ax.axvline(x=los_x - ytg, color='yellow', linestyle='-', alpha=0.8, linewidth=2, zorder=2)
 
     # Colors by side
     def is_color_darker(color1, color2):
@@ -213,25 +290,52 @@ def animate_play(
         ax.add_patch(plt.Rectangle((0, 0), 10, 53.3, color='grey', alpha=0.1, zorder=0))
         ax.text(
             5, 53.3/2, team_desc.query('team_abbr == @defense').team_nick.values[0].upper(),
-            fontsize=60, fontweight='bold', alpha=.5, #style='italic',
+            fontsize=60, fontweight='bold', alpha=.5,
             rotation=90, ha='center', va='center', zorder=1,
             color=defense_c1,
-            path_effects=[pe.withStroke(linewidth=7, foreground=defense_c2)]  # Outline
+            path_effects=[pe.withStroke(linewidth=7, foreground=defense_c2)]
         )
     if max_x > 110:
         # plot the offense team endzone
         ax.add_patch(plt.Rectangle((110, 0), 10, 53.3, color='grey', alpha=0.1, zorder=0))
         ax.text(
             115, 53.3/2, team_desc.query('team_abbr == @offense').team_nick.values[0].upper(),
-            fontsize=60, fontweight='bold', alpha=.5, #style='italic',
+            fontsize=60, fontweight='bold', alpha=.5,
             rotation=-90, ha='center', va='center', zorder=1,
             color=offense_c1, 
-            path_effects=[pe.withStroke(linewidth=7, foreground=offense_c2)]  # Outline
+            path_effects=[pe.withStroke(linewidth=7, foreground=offense_c2)]
         )
 
     position_texts = []
-    player_path_lines = {}  # For post-pass paths
-    arrows = []  # For movement arrows
+    player_path_lines = {}
+    arrows = []
+    
+    # Create heatmap scatter placeholder and colorbar
+    if plot_heatmap:
+        heatmap_scat = ax.scatter([], [], c=[], cmap='RdYlGn_r', vmin=epa_min, vmax=epa_max, 
+                                 s=20, alpha=1, zorder=2)
+        
+        # Create colorbar with proper axis
+        cbar = plt.colorbar(heatmap_scat, cax=cax, orientation='vertical')
+        cbar.set_label('EPA', fontsize=15, fontweight='bold', rotation=270, labelpad=15)
+        cbar.ax.tick_params(labelsize=9)
+        
+        # Set custom ticks
+        if len(epa_ticks) > 0:
+            cbar.set_ticks(epa_ticks)
+            # Format tick labels to show 2 decimal places
+            tick_labels = [f'{tick:.2f}' for tick in epa_ticks]
+            cbar.set_ticklabels(tick_labels)
+        
+        # Initialize safety EPA line on colorbar (initially invisible)
+        safety_epa_line = cax.axhline(y=0, color='black', linewidth=2.5, linestyle='-', 
+                                     alpha=0, zorder=10)  # Start with alpha=0 (invisible)
+        
+    else:
+        heatmap_scat = None
+        cax = None
+        cbar = None
+        safety_epa_line = None
 
     def update(frame_tuple):
         frame_id, frame_data = frame_tuple
@@ -253,19 +357,17 @@ def animate_play(
         ]
 
         # Update the dashed trajectory line
-        if not thrown_frames.empty:
+        if not thrown_frames.empty and show_ball_trajectory:
             ball_path_line.set_data(thrown_frames['x'].values, thrown_frames['y'].values)
         else:
             ball_path_line.set_data([], [])
 
         # --- Highlight post-pass players ---
         if highlight_postpass_players:
-            # Determine if pass has been thrown yet
             pass_has_been_thrown = any(tracking_play['frame_id'] <= current_frame_id)
             if pass_has_been_thrown and (tracking_play['pass_thrown'].any()):
                 postpass_players = frame_data[frame_data['player_to_predict'] == True]
                 if not postpass_players.empty:
-                    # Highlight on offense and defense separately
                     off_colors = ['red' if pid in postpass_players['nfl_id'].values else 
                                   edge_color_map['Offense'] for pid in off_data['nfl_id'].values]
                     def_colors = ['red' if pid in postpass_players['nfl_id'].values else 
@@ -275,7 +377,6 @@ def animate_play(
                     scat_def.set_edgecolors(def_colors)
                     scat_def.set_linewidths([3 if c == 'red' else 2 for c in def_colors])
         else:
-            # Reset edge colors to default if highlighting off
             scat_off.set_edgecolors(edge_color_map['Offense'])
             scat_def.set_edgecolors(edge_color_map['Defense'])
             scat_off.set_linewidths(2)
@@ -283,7 +384,6 @@ def animate_play(
 
         # --- Post-pass player paths ---
         if show_postpass_paths:
-            # Get player_to_predict IDs
             predicted_ids = tracking_play.loc[tracking_play['player_to_predict'] == True, 'nfl_id'].unique()
 
             for pid in predicted_ids:
@@ -293,18 +393,14 @@ def animate_play(
                     & (tracking_play['frame_id'] <= current_frame_id)
                 ]
 
-                # Only plot if pass has been thrown and there are frames
                 if not player_frames.empty:
                     if pid not in player_path_lines:
-                        # Create a new dashed line for this player
                         line, = ax.plot([], [], '--', color='black', linewidth=2, alpha=0.8, zorder=2)
                         player_path_lines[pid] = line
                     player_path_lines[pid].set_data(player_frames['x'].values, player_frames['y'].values)
                 elif pid in player_path_lines:
-                    # Clear line if not yet thrown
                     player_path_lines[pid].set_data([], [])
         else:
-            # Remove all player path lines if disabled
             for line in player_path_lines.values():
                 line.set_data([], [])
 
@@ -327,17 +423,16 @@ def animate_play(
                     fontweight='bold', zorder=4
                 )
                 position_texts.append(t)
-
         
         # --- Plot arrows for movement ---
         if plot_arrows:
-            # Remove previous arrows
             for arrow in arrows:
                 arrow.remove()
             arrows.clear()
 
-            # Add new arrows for each player and the ball
             for _, row in frame_data.iterrows():
+                if row['position'] in ['QB','Ball']:
+                    continue
                 x, y = row['x'], row['y']
                 length = 3.0 
                 angle_rad = np.radians(row['dir'])
@@ -353,12 +448,49 @@ def animate_play(
                 ax.add_patch(arrow)
                 arrows.append(arrow)
 
+        # Update heatmap and safety EPA tracking
+        if plot_heatmap and heatmap_scat is not None:
+            if frame_id >= heatmap_start_frame:
+                # Update heatmap
+                heatmap_scat.set_offsets(heatmap_data[['x', 'y']].values)
+                heatmap_scat.set_array(heatmap_data['EPA'].values)
+
+                # Find safety's current position
+                safety_frame_data = frame_data[frame_data['nfl_id'] == safety_id]
+                if not safety_frame_data.empty:
+                    safety_x = safety_frame_data['x'].values[0]
+                    safety_y = safety_frame_data['y'].values[0]
+                    
+                    # Find nearest EPA point to safety's position
+                    distances = np.sqrt(
+                        (heatmap_data['x'] - safety_x)**2 + 
+                        (heatmap_data['y'] - safety_y)**2
+                    )
+                    nearest_idx = distances.idxmin()
+                    safety_current_epa = heatmap_data.loc[nearest_idx, 'EPA']
+                    
+                    # Update safety EPA line on colorbar (make visible)
+                    if safety_epa_line is not None:
+                        safety_epa_line.set_ydata([safety_current_epa, safety_current_epa])
+                        safety_epa_line.set_alpha(0.9)  # Make line visible
+            else:
+                # Heatmap not started yet
+                heatmap_scat.set_offsets(np.empty((0, 2)))
+                heatmap_scat.set_array(np.array([]))
+                
+                # Hide safety EPA line (keep it invisible)
+                # if safety_epa_line is not None:
+                    # safety_epa_line.set_alpha(0)  # Make line invisible
+
         # Collect all active artists
         animated_artists = [scat_off, scat_def, scat_ball, ball_path_line, *position_texts, *arrows]
         animated_artists.extend(player_path_lines.values())
+        if heatmap_scat is not None:
+            animated_artists.append(heatmap_scat)
+        if safety_epa_line is not None:
+            animated_artists.append(safety_epa_line)
 
         return animated_artists
-
 
     # Create animation
     ani = animation.FuncAnimation(
@@ -372,7 +504,6 @@ def animate_play(
             print(f"Animation saved to {save_path}")
         except Exception as e:
             print(f"Error saving animation: {e}")
-            # Fallback to HTML display
             plt.close(fig)
             return HTML(ani.to_jshtml())
     else:
