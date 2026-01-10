@@ -1,0 +1,6 @@
+1. model had no terminal-state awareness when set up where x values were normalized relative
+to los. Need to encode how far players are from endzone, else it often just tries to minimize
+yards after catch on a high catch probabily play. However, when a throw is to the endzone,
+minimizing YAC does nothing as a catch is a touchdown -> terminal state.
+    - needed to adjust model and graph design to help it understand game rules
+2. GNN attention head vastly improved performance of GCNN

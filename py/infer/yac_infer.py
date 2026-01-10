@@ -38,13 +38,17 @@ os.environ["MKL_NUM_THREADS"] = "1"
 ##############  i. Load and preprocess the data ##############
 sup_data = pd.read_csv('../data/supplementary_data.csv')
 tracking_input, tracking_output = pd.DataFrame(), pd.DataFrame()
-for week in tqdm(range(1, N_WEEKS+1), desc="Loading weekly data"):
+for week in tqdm(range(15, 16), desc="Loading weekly data"):
     tracking_input = pd.concat([tracking_input, pd.read_csv(f'../data/train/input_2023_w{week:02d}.csv')], axis=0)
     tracking_output = pd.concat([tracking_output, pd.read_csv(f'../data/train/output_2023_w{week:02d}.csv')], axis=0)
 LOG.info(f'Tracking input shape: {tracking_input.shape}, output shape: {tracking_output.shape}')
 
 games, plays, players, tracking = preprocess.process_data(tracking_input, tracking_output, sup_data)
 team_desc = preprocess.fetch_team_desc()
+
+plays = plays.query('gpid=="2023121602_115"')
+tracking = tracking.query('gpid=="2023121602_115"')
+games = games[games['game_id'].isin(plays['game_id'].unique())]
 
 # Normalize the x coordinates relative to line of scrimmage
 tracking = tracking.merge(
@@ -539,4 +543,4 @@ for i in tqdm(range(0, graph_dataset.len(), BATCH_SIZE), desc="Predicting YAC fo
 results_df = pd.DataFrame(meta_data)
 results_df['predicted_yac'] = all_yac_predictions
 os.makedirs(SAVE_PATH, exist_ok=True)
-results_df.to_parquet(os.path.join(SAVE_PATH, 'yac_preds.parquet'), index=False)
+results_df.to_parquet(os.path.join(SAVE_PATH, 'yac_preds2.parquet'), index=False)
